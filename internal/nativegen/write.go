@@ -206,7 +206,7 @@ func AddPlatform(dir, platform string) error {
 // unsupported, to fill in one at a time.
 func stubSwift(m *Module) []byte {
 	var b bytes.Buffer
-	fmt.Fprintf(&b, "import Foundation\n\n// The implementation of package %s on Apple's platforms. Implement the\n// methods one at a time: each says it is unsupported until it does.\n", m.Package)
+	fmt.Fprintf(&b, "import Foundation\n#if canImport(AppKit)\nimport AppKit\n#endif\n\n// The implementation of package %s on Apple's platforms. Implement the\n// methods one at a time: each says it is unsupported until it does.\n", m.Package)
 	g := &swiftGen{m: m, b: &b}
 	for _, it := range m.Interfaces {
 		if it.ByGo {
@@ -220,7 +220,11 @@ func stubSwift(m *Module) []byte {
 		if it.Entry {
 			fmt.Fprintf(&b, "\n%sfunc make%s() throws -> any %s { %s() }\n", attr, it.Name, it.Name, class)
 		}
-		fmt.Fprintf(&b, "\n%sfinal class %s: %s {\n", attr, class, it.Name)
+		base := it.Name
+		if it.View {
+			base = "NSView, " + it.Name
+		}
+		fmt.Fprintf(&b, "\n%sfinal class %s: %s {\n", attr, class, base)
 		for _, me := range it.Methods {
 			req := g.requirement(it, me)
 			var body string

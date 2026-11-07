@@ -365,7 +365,8 @@ func (l *loader) iface(name string, from ast.Node) *Interface {
 					it.Closer = true
 					it.Methods = append(it.Methods, &Method{Name: "Close", Err: true, Close: true, Pos: l.pos(fld)})
 				case path == nativePath && t.Sel.Name == "View":
-					l.errorf(fld, "%s embeds native.View: views of the platform in native UI are not implemented yet", name)
+					it.View = true
+					it.MainThread = true // AppKit's views are the main thread's
 				default:
 					l.errorf(fld, "%s embeds %s: an interface of a module embeds only io.Closer and native.View", name, exprString(t))
 				}
@@ -485,7 +486,7 @@ func (l *loader) method(it *Interface, name string, fld *ast.Field, ft *ast.Func
 		m.Result.Iface.returned = true
 	}
 	for _, p := range m.Params {
-		if p.Type.Kind == Window {
+		if p.Type.Kind == Window || p.Type.Kind == View {
 			m.MainThread = true // AppKit's windows are the main thread's
 		}
 	}
@@ -656,8 +657,11 @@ func (l *loader) typeOf(e ast.Expr, f *ast.File, where string, param bool) *Type
 			l.m.Imports[uiPath] = true
 			return &Type{Kind: Rect, Go: "ui.Rect"}
 		case isSel(x, f, nativePath, "View"):
-			l.errorf(x, "%s uses native.View as a value, which MyGo does not implement yet", where)
-			return nil
+			if !param {
+				l.errorf(x, "%s uses native.View other than as a parameter: a view to anchor to", where)
+				return nil
+			}
+			return &Type{Kind: View, Go: "native.View"}
 		case isSel(x, f, "context", "Context"):
 			l.errorf(x, "%s uses context.Context other than as its first parameter", where)
 			return nil

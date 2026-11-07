@@ -37,6 +37,9 @@ type Analyzer interface {
 	// Uppercase writes the upper case of text into buf, and returns how
 	// many bytes it wrote.
 	Uppercase(text string, buf *native.Buffer) (int, error)
+	// Chunks yields the UTF-8 bytes of text, size at a time, the last
+	// chunk padded with zeros, in buffers lent until the loop continues.
+	Chunks(ctx context.Context, text string, size int) iter.Seq2[*native.Buffer, error]
 	// Sleep waits for d, or until ctx is canceled.
 	Sleep(ctx context.Context, d time.Duration) error
 }

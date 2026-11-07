@@ -44,6 +44,8 @@ final class NativeBuffer: Codable, @unchecked Sendable {
     /// The buffer's memory, valid as long as the buffer.
     let bytes: UnsafeMutableRawBufferPointer
     private let owned: Bool
+    /// The pool the buffer goes back to once Go is done with it.
+    fileprivate weak var pool: NativeBufferPool?
 
     /// Makes a buffer of count bytes, which the implementation may yield
     /// from a stream: Go reads it until its loop asks for the next value.
@@ -70,6 +72,37 @@ final class NativeBuffer: Codable, @unchecked Sendable {
 
     deinit {
         if owned { bytes.deallocate() }
+    }
+
+    /// Gives the buffer back to its pool, as Go's loop moved on.
+    fileprivate func recycle() { pool?.put(self) }
+}
+
+/// Buffers of one size that a stream yields, each reused once Go's loop
+/// moves on from it, so that a stream of buffers allocates none once it
+/// runs: get one, fill it, yield it.
+final class NativeBufferPool: @unchecked Sendable {
+    /// The size of the pool's buffers.
+    let size: Int
+    private let lock = NSLock()
+    private var free: [NativeBuffer] = []
+
+    init(size: Int) { self.size = size }
+
+    /// Returns a buffer Go is done with, or a new one.
+    func get() -> NativeBuffer {
+        lock.lock()
+        defer { lock.unlock() }
+        if let b = free.popLast() { return b }
+        let b = NativeBuffer(count: size)
+        b.pool = self
+        return b
+    }
+
+    fileprivate func put(_ b: NativeBuffer) {
+        lock.lock()
+        free.append(b)
+        lock.unlock()
     }
 }
 
@@ -385,7 +418,9 @@ func _mygoIterate<S: AsyncSequence & Sendable>(_ call: UInt64, _ s: S, _ demand:
     var it = s.makeAsyncIterator()
     var lent: S.Element? = nil
     for await _ in demand {
-        lent = nil // Go is done with what the previous value lent
+        // Go is done with what the previous value lent.
+        (lent as? NativeBuffer)?.recycle()
+        lent = nil
         do {
             guard let v = try await it.next() else {
                 _mygoSend(_mygoKindItem, call, 3, nil)

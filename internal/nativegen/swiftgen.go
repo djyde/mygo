@@ -157,6 +157,8 @@ func swiftType(t *Type) string {
 		return "any " + t.Name
 	case Window:
 		return "NSWindow"
+	case View:
+		return "NSView"
 	case Rect:
 		return "CGRect"
 	case Buffer:
@@ -185,7 +187,7 @@ func wireType(t *Type) string {
 		return "_MygoNanos"
 	case Rect:
 		return "_MygoRect"
-	case InterfaceType, Window, Func:
+	case InterfaceType, Window, Func, View:
 		return "UInt64"
 	case Slice:
 		return "[" + wireType(t.Elem) + "]"
@@ -294,6 +296,9 @@ func (g *swiftGen) requirement(it *Interface, m *Method) string {
 func (g *swiftGen) protocol(it *Interface) {
 	g.p("\n%s", docComment(it.Doc, ""))
 	inherits := "AnyObject"
+	if it.View {
+		inherits = "NSView"
+	}
 	if it.Closer {
 		inherits += ", Closer"
 	}
@@ -389,6 +394,10 @@ func (g *swiftGen) enumDecl(e *Enum) {
 }
 
 func (g *swiftGen) errorsDecl() {
+	if len(g.m.Errors) == 0 {
+		g.p("\n/// The errors package %s declares, with native.NewError: none.\nstruct %sError: Error, Sendable, RawRepresentable {\n    let rawValue: String\n    init?(rawValue: String) { return nil }\n}\n", g.m.Package, g.m.Name)
+		return
+	}
 	g.p("\n/// The errors package %s declares, with native.NewError. Go compares\n/// them with errors.Is.\nenum %sError: String, Error, Sendable, CaseIterable {\n", g.m.Package, g.m.Name)
 	for _, e := range g.m.Errors {
 		g.p("%s    case %s = %q\n", docComment(e.Doc, "    "), e.SwiftName(), e.Code)
@@ -428,7 +437,7 @@ func (g *swiftGen) argsStruct(name string, params []*Param) string {
 // handles until the call, the rest as their Swift types.
 func wireOrNative(t *Type) string {
 	switch t.Kind {
-	case InterfaceType, Window, Func:
+	case InterfaceType, Window, Func, View:
 		return "UInt64"
 	}
 	return swiftType(t)
@@ -436,7 +445,7 @@ func wireOrNative(t *Type) string {
 
 func decodeUnkeyed(t *Type) string {
 	switch t.Kind {
-	case InterfaceType, Window, Func:
+	case InterfaceType, Window, Func, View:
 		return "try c.decodeNil() ? 0 : try c.decode(UInt64.self)"
 	}
 	if def := nilDefault(t); def != "" {
@@ -461,6 +470,8 @@ func (g *swiftGen) argValue(m *Method, p *Param) string {
 		return fmt.Sprintf("(_mygoObject(%s) as any %s)", a, p.Type.Iface.Name)
 	case Window:
 		return fmt.Sprintf("_mygoWindow(%s)", a)
+	case View:
+		return fmt.Sprintf("(_mygoObject(%s) as NSView)", a)
 	case Rect:
 		for _, q := range m.Params {
 			if q.Type.Kind == Window {

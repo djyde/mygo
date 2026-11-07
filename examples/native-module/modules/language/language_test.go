@@ -149,6 +149,23 @@ func TestCallbacks(t *testing.T) {
 	}
 }
 
+func TestBufferStream(t *testing.T) {
+	a := analyzer(t)
+	var got strings.Builder
+	addrs := map[*byte]bool{}
+	for b, err := range a.Chunks(wait.Context(t), "abcdefghij", 4) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		got.WriteString(strings.TrimRight(string(b.Bytes()), "\x00"))
+		addrs[&b.Bytes()[0]] = true
+	}
+	if got.String() != "abcdefghij" {
+		t.Fatalf("Chunks = %q", got.String())
+	}
+	t.Logf("3 chunks in %d buffers", len(addrs))
+}
+
 func TestBufferAndContext(t *testing.T) {
 	a := analyzer(t)
 	buf := native.NewBuffer(5)

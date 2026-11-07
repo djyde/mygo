@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -104,7 +105,7 @@ func prepareNative(c *Config, goos, goarch string, mode nativeMode) error {
 		if goos != "darwin" || !nativegen.HasPlatform(dir, "apple") {
 			continue
 		}
-		b, err := buildSwiftModule(dir, goarch, mode == nativeRelease)
+		b, err := moduleBuild(c, dir, goarch, mode)
 		if err != nil {
 			return err
 		}
@@ -140,6 +141,49 @@ func prepareNative(c *Config, goos, goarch string, mode nativeMode) error {
 	}
 	c.native = app
 	return nil
+}
+
+// moduleBuild builds the Swift package of the module in dir, or takes its
+// prebuilt implementation: in release builds while it matches the
+// sources, and wherever Swift is missing.
+func moduleBuild(c *Config, dir, goarch string, mode nativeMode) (nativeBuild, error) {
+	pre, err := readPrebuilt(dir, "apple")
+	if err != nil {
+		return nativeBuild{}, err
+	}
+	_, lookErr := exec.LookPath("swift")
+	haveSwift := runtime.GOOS == "darwin" && lookErr == nil
+	if pre != nil {
+		hash, err := swiftSourceHash(dir)
+		if err != nil {
+			return nativeBuild{}, err
+		}
+		m, err := nativegen.Load(dir)
+		if err != nil {
+			return nativeBuild{}, err
+		}
+		rel := relPathTo(c.root, dir)
+		switch {
+		case pre.Source == hash && (mode == nativeRelease || !haveSwift):
+			b, err := usePrebuilt(dir, m.Name, pre)
+			if err == nil && mode == nativeDev {
+				dst := filepath.Join(dir, "apple", ".build", "mygo")
+				if err = os.MkdirAll(dst, 0o755); err == nil {
+					for _, f := range append([]string{b.dylib}, b.frameworks...) {
+						if err = copyPath(f, filepath.Join(dst, filepath.Base(f))); err != nil {
+							break
+						}
+					}
+				}
+			}
+			return b, err
+		case pre.Source != hash && !haveSwift:
+			return nativeBuild{}, fmt.Errorf("the prebuilt implementation of native module %s is older than its sources, and this machine cannot build them: run mygo native prebuild %s on a Mac, and commit %s", rel, rel, filepath.Join(rel, pluginFile))
+		case pre.Source != hash && mode == nativeRelease:
+			warnf("The prebuilt implementation of native module %s is older than its sources: building them (mygo native prebuild %s updates it)", rel, rel)
+		}
+	}
+	return buildSwiftModule(dir, goarch, mode == nativeRelease)
 }
 
 // swiftArchs are the architectures of swift build for a GOARCH.
@@ -211,6 +255,7 @@ func buildSwiftModule(dir, goarch string, release bool) (nativeBuild, error) {
 // swiftProblems keeps the lines of the compiler's errors, with what
 // follows each, out of swift build's output.
 func swiftProblems(out string) string {
+	out = ansiEscape.ReplaceAllString(out, "")
 	var keep []string
 	lines := strings.Split(out, "\n")
 	for i, l := range lines {
@@ -226,6 +271,8 @@ func swiftProblems(out string) string {
 	}
 	return strings.Join(slices.Compact(keep), "\n")
 }
+
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\`)
 
 // copyPath copies a file, or a directory such as a framework, with its
 // links.
@@ -372,7 +419,7 @@ language (docs/native-modules.md).
 	case "call":
 		return runNativeCall(args[1:])
 	case "prebuild":
-		return errors.New("mygo native prebuild is not implemented yet: build the app on a Mac with Xcode or its Command Line Tools")
+		return runNativePrebuild(args[1:])
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil

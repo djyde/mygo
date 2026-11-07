@@ -21,6 +21,8 @@ import (
 	"unsafe"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/internal/platform"
+	"github.com/egoist/mygo/internal/surface"
 )
 
 // ErrClosed is returned by the methods of an object that was closed.
@@ -64,9 +66,19 @@ func (e *Error) Is(target error) bool {
 	return ok && t.Code != "" && t.Code == e.Code
 }
 
-// View is implemented by the values of interfaces that embed it, which a
-// view of the platform implements.
+// View is embedded by the interfaces of a module that a view of the
+// platform implements, an NSView on macOS, which ui.NativeView shows in
+// native UI. Its methods are for MyGo.
 type View interface {
+	NativeObject() *Object
+	// SurfaceWebView returns what stands for the view under the surface of
+	// conn, for package ui, which places it as it places web views. Main
+	// thread only.
+	SurfaceWebView(conn *surface.Conn) platform.WebView
+}
+
+// object is what every value a module returns implements.
+type object interface {
 	NativeObject() *Object
 }
 
@@ -109,6 +121,49 @@ type Object struct {
 	// funcs are the callbacks passed to the call that returned it, for a
 	// subscription, released when it closes.
 	funcs []uint64
+	flags Flags
+	// shown is where windows show the object, a view: what stands for it
+	// under their surfaces. Main thread only.
+	shown *shownViews
+}
+
+// shownViews are the surfaces a view shows under.
+type shownViews struct {
+	embeds map[*surface.Conn]platform.WebView
+}
+
+// close takes the view out of the windows showing it. Main thread only.
+func (s *shownViews) close() {
+	for conn, e := range s.embeds {
+		e.Close()
+		delete(s.embeds, conn)
+	}
+}
+
+// SurfaceWebView puts the object, a view, under the surface of conn, the
+// first time, and returns what stands for it there.
+func (o *Object) SurfaceWebView(conn *surface.Conn) platform.WebView {
+	if o == nil || o.closed.Load() || conn == nil {
+		return nil
+	}
+	if e, ok := o.shown.embeds[conn]; ok {
+		return e
+	}
+	vs, ok := conn.Surface.(platform.ViewSurface)
+	if !ok {
+		return nil
+	}
+	e, err := vs.EmbedView(uintptr(o.h))
+	if err != nil {
+		return nil
+	}
+	// The view leaves the surface of another window that showed it.
+	for c, other := range o.shown.embeds {
+		other.Close()
+		delete(o.shown.embeds, c)
+	}
+	o.shown.embeds[conn] = e
+	return e
 }
 
 // NativeObject returns o, so that every proxy of a module is a View.
@@ -135,20 +190,38 @@ func Handle(v View) uint64 {
 }
 
 // object wraps a handle the platform returned, released once the Go value
-// is unreachable unless closed before.
-func (m *Module) object(h uint64) *Object {
+// is unreachable unless closed before. Objects of flags MainThread are
+// released on the main thread.
+func (m *Module) object(h uint64, flags Flags) *Object {
 	if h == 0 {
 		return nil
 	}
-	o := &Object{m: m, h: h}
-	runtime.AddCleanup(o, func(h uint64) { m.release(h) }, h)
+	o := &Object{m: m, h: h, flags: flags, shown: &shownViews{embeds: map[*surface.Conn]platform.WebView{}}}
+	type gone struct {
+		h     uint64
+		flags Flags
+		shown *shownViews
+	}
+	runtime.AddCleanup(o, func(g gone) { m.release(g.h, g.flags, g.shown) }, gone{h, flags, o.shown})
 	return o
 }
 
-func (m *Module) release(h uint64) {
-	if lib, err := m.load(); err == nil {
-		lib.release(m, h)
+// release takes the object out of the windows that show it, and lets go of
+// it.
+func (m *Module) release(h uint64, flags Flags, shown *shownViews) {
+	lib, err := m.load()
+	if err != nil {
+		return
 	}
+	if flags&MainThread != 0 && mygo.App.IsReady() {
+		mygo.RunOnMain(func() {
+			shown.close()
+			lib.release(m, h)
+		})
+		return
+	}
+	shown.close()
+	lib.release(m, h)
 }
 
 // New makes the implementation of an entry point.
@@ -160,11 +233,12 @@ func (m *Module) New(entry string, flags Flags) (*Object, error) {
 	if h == 0 {
 		return nil, fmt.Errorf("native: %s's make%s returned nothing", m.Name, entry)
 	}
-	return m.object(h), nil
+	return m.object(h, flags), nil
 }
 
-// Object wraps the handle of an object the platform returned.
-func (m *Module) Object(h uint64) *Object { return m.object(h) }
+// Object wraps the handle of an object the platform returned, whose
+// methods flags describe.
+func (m *Module) Object(h uint64, flags Flags) *Object { return m.object(h, flags) }
 
 // Call calls a method of the object that returns at once, decoding what it
 // returns into result unless nil.
@@ -200,7 +274,7 @@ func (o *Object) Subscribe(sym string, flags Flags, args []any, funcs ...uint64)
 		releaseFuncs(funcs)
 		return nopCloser{err}
 	}
-	c := o.m.object(h)
+	c := o.m.object(h, flags)
 	c.funcs = funcs
 	return c
 }
@@ -215,7 +289,19 @@ func (o *Object) Close() error {
 	if o == nil || !o.closed.CompareAndSwap(false, true) {
 		return ErrClosed
 	}
-	err := o.m.call(context.Background(), o.h, "close", 0, nil, nil)
+	var err error
+	if o.flags&MainThread != 0 {
+		var cerr error
+		err = onMain(o.flags, func() {
+			o.shown.close()
+			cerr = o.m.call(context.Background(), o.h, "close", o.flags, nil, nil)
+		})
+		if err == nil {
+			err = cerr
+		}
+	} else {
+		err = o.m.call(context.Background(), o.h, "close", 0, nil, nil)
+	}
 	releaseFuncs(o.funcs)
 	runtime.KeepAlive(o)
 	return err
@@ -420,7 +506,7 @@ func bytesPointer(data []byte) uintptr {
 // HandleOf returns the handle of v when a module returned it, else 0: a
 // value Go made cannot stand for the platform's.
 func HandleOf(v any) uint64 {
-	if n, ok := v.(View); ok && n != nil {
+	if n, ok := v.(object); ok && n != nil {
 		return n.NativeObject().Handle()
 	}
 	return 0

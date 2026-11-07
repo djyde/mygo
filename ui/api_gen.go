@@ -1788,6 +1788,33 @@ func Modal(c *Context, open *bool, fn func()) Element {
 	return wrapElement(_e)
 }
 
+// NativeView shows a view of the platform, a value of a native module's
+// interface that embeds native.View (an NSView on macOS), in the element's
+// content box, as WebView shows a web view: it has no size of its own and
+// takes its size from layout, it is cut to the element's Radius, and what
+// paints after it shows over it. Make the view once, outside the view
+// function, and show it from there:
+//
+//	ui.Box(c).Fill().Children(func() {
+//		ui.NativeView(c, app.player).Fill()
+//		ui.Text(c, caption).Absolute().Left(24).Bottom(24)
+//	})
+//
+// The view takes the pointer where it shows, and the keyboard once
+// clicked or tabbed into, as any view of the platform. A view the frame
+// does not build hides and keeps its state. Where views of the platform
+// cannot show, as in browsers, the element shows nothing.
+func NativeView(c *Context, v NativeWebView) Element {
+	_ctx := c.build()
+	if _ctx == nil {
+		return Element{}
+	}
+	_ctx.rt.beginBuild()
+	_e := coreNativeView(_ctx, v)
+	_ctx.rt.endBuild()
+	return wrapElement(_e)
+}
+
 // NewTester starts testing view in a window of width×height DIPs. Two
 // elements given one key under one parent make it panic where the second
 // was given, as apps only log it.

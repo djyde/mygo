@@ -45,6 +45,26 @@ func coreWebView(c *context, v NativeWebView) *node {
 	return e
 }
 
+// NativeView shows a view of the platform, a value of a native module's
+// interface that embeds native.View (an NSView on macOS), in the element's
+// content box, as WebView shows a web view: it has no size of its own and
+// takes its size from layout, it is cut to the element's Radius, and what
+// paints after it shows over it. Make the view once, outside the view
+// function, and show it from there:
+//
+//	ui.Box(c).Fill().Children(func() {
+//		ui.NativeView(c, app.player).Fill()
+//		ui.Text(c, caption).Absolute().Left(24).Bottom(24)
+//	})
+//
+// The view takes the pointer where it shows, and the keyboard once
+// clicked or tabbed into, as any view of the platform. A view the frame
+// does not build hides and keeps its state. Where views of the platform
+// cannot show, as in browsers, the element shows nothing.
+func coreNativeView(c *context, v NativeWebView) *node {
+	return coreWebView(c, v)
+}
+
 // webPlace is where a frame shows a web view: size is the size its page
 // lays out at, which frame shows scaled, and radii its corners', in its
 // DIPs; hit is the index of its element's own hit, inert that it shows

@@ -88,6 +88,21 @@ final class NLAnalyzer: Analyzer {
         return n
     }
 
+    func chunks(text: String, size: Int) -> AsyncThrowingStream<NativeBuffer, Error> {
+        let pool = NativeBufferPool(size: size)
+        let bytes = Array(text.utf8)
+        return AsyncThrowingStream { continuation in
+            for start in stride(from: 0, to: bytes.count, by: size) {
+                let b = pool.get()
+                b.bytes.initializeMemory(as: UInt8.self, repeating: 0)
+                let n = min(size, bytes.count - start)
+                b.bytes.copyBytes(from: bytes[start..<start + n])
+                continuation.yield(b)
+            }
+            continuation.finish()
+        }
+    }
+
     func sleep(d: Duration) async throws {
         try await Task.sleep(for: d)
     }

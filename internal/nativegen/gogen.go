@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -47,17 +48,20 @@ func _dir() string {
 	}
 	out := b.String()
 	var imports []string
+	uses := func(pkg string) bool {
+		return regexp.MustCompile(`(^|[^A-Za-z0-9_.])` + pkg + `\.`).MatchString(out)
+	}
 	for path, used := range map[string]bool{
 		"github.com/egoist/mygo/native": true,
 		"path/filepath":                 true,
 		"runtime":                       true,
-		"context":                       strings.Contains(out, "context."),
-		"iter":                          strings.Contains(out, "iter."),
-		"fmt":                           strings.Contains(out, "fmt."),
-		"io":                            strings.Contains(out, "io.Closer"),
-		"time":                          strings.Contains(out, "time."),
-		mygoPath:                        strings.Contains(out, "*mygo."),
-		uiPath:                          strings.Contains(out, "ui.Rect"),
+		"context":                       uses("context"),
+		"iter":                          uses("iter"),
+		"fmt":                           uses("fmt"),
+		"io":                            uses("io"),
+		"time":                          uses("time"),
+		mygoPath:                        uses("mygo"),
+		uiPath:                          uses("ui"),
 	} {
 		if used {
 			imports = append(imports, fmt.Sprintf("%q", path))
@@ -129,9 +133,14 @@ func (g *goGen) proxy(it *Interface) {
 		g.p("\n// New%s makes the implementation of %s on this platform. It returns\n// errors.ErrUnsupported where the module has none, or the system lacks\n// what it needs.\nfunc New%s() (%s, error) {\n", it.Name, it.Name, it.Name, it.Name)
 		g.p("\to, err := _module.New(%q, %s)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\treturn &%s{o}, nil\n}\n", it.Name, flagsOf(it.MainThread), name)
 	}
-	g.p("\n// %s calls the platform's implementation of %s.\ntype %s struct{ o *native.Object }\n", name, it.Name, name)
-	g.p("\n// NativeObject returns the platform's object.\nfunc (x *%s) NativeObject() *native.Object { return x.o }\n", name)
-	g.p("\n// %s wraps a handle of the platform's, or returns nil.\nfunc _wrap%s(h uint64) %s {\n\tif h == 0 {\n\t\treturn nil\n\t}\n\treturn &%s{_module.Object(h)}\n}\n", "_wrap"+it.Name, it.Name, it.Name, name)
+	if it.View {
+		// The object's methods, promoted, make it a native.View.
+		g.p("\n// %s calls the platform's implementation of %s, a view.\ntype %s struct{ *native.Object }\n", name, it.Name, name)
+	} else {
+		g.p("\n// %s calls the platform's implementation of %s.\ntype %s struct{ o *native.Object }\n", name, it.Name, name)
+		g.p("\n// NativeObject returns the platform's object.\nfunc (x *%s) NativeObject() *native.Object { return x.o }\n", name)
+	}
+	g.p("\n// %s wraps a handle of the platform's, or returns nil.\nfunc _wrap%s(h uint64) %s {\n\tif h == 0 {\n\t\treturn nil\n\t}\n\treturn &%s{_module.Object(h, %s)}\n}\n", "_wrap"+it.Name, it.Name, it.Name, name, flagsOf(it.MainThread))
 	for _, m := range it.Methods {
 		g.method(it, m)
 	}
@@ -158,6 +167,8 @@ func (g *goGen) argExprs(m *Method) (pre []string, args []string, funcs []string
 			}
 		case Window:
 			args = append(args, "native.WindowHandle("+p.Name+")")
+		case View:
+			args = append(args, "native.HandleOf("+p.Name+")")
 		default:
 			args = append(args, p.Name)
 		}
@@ -198,7 +209,7 @@ func (g *goGen) method(it *Interface, m *Method) {
 	sym := it.Name + "_" + m.Name
 	flags := flagsOf(m.MainThread)
 	if m.Close {
-		g.p("\treturn x.o.Close()\n}\n")
+		g.p("\treturn x.NativeObject().Close()\n}\n")
 		return
 	}
 	pre, args, funcs := g.argExprs(m)
@@ -222,9 +233,9 @@ func (g *goGen) method(it *Interface, m *Method) {
 	case m.Stream != 0:
 		var expr string
 		if m.Result.Kind == InterfaceType {
-			expr = fmt.Sprintf("native.StreamMap(ctx, x.o, %q, %s, %s, _wrap%s)", sym, flags, argList, m.Result.Iface.Name)
+			expr = fmt.Sprintf("native.StreamMap(ctx, x.NativeObject(), %q, %s, %s, _wrap%s)", sym, flags, argList, m.Result.Iface.Name)
 		} else {
-			expr = fmt.Sprintf("native.Stream[%s](ctx, x.o, %q, %s, %s)", m.Result.Go, sym, flags, argList)
+			expr = fmt.Sprintf("native.Stream[%s](ctx, x.NativeObject(), %q, %s, %s)", m.Result.Go, sym, flags, argList)
 		}
 		if m.Stream == 1 {
 			expr = "native.Seq(" + expr + ")"
@@ -232,12 +243,12 @@ func (g *goGen) method(it *Interface, m *Method) {
 		g.p("\treturn %s\n}\n", expr)
 		return
 	case m.Closer:
-		g.p("\treturn x.o.Subscribe(%q, %s, %s%s)\n}\n", sym, flags, argList, prefixComma(funcs))
+		g.p("\treturn x.NativeObject().Subscribe(%q, %s, %s%s)\n}\n", sym, flags, argList, prefixComma(funcs))
 		return
 	}
-	callFn := fmt.Sprintf("x.o.Call(%q, %s, %s, ", sym, flags, argList)
+	callFn := fmt.Sprintf("x.NativeObject().Call(%q, %s, %s, ", sym, flags, argList)
 	if m.Ctx {
-		callFn = fmt.Sprintf("x.o.CallContext(ctx, %q, %s, %s, ", sym, flags, argList)
+		callFn = fmt.Sprintf("x.NativeObject().CallContext(ctx, %q, %s, %s, ", sym, flags, argList)
 	}
 	switch {
 	case m.Result == nil:
@@ -247,6 +258,8 @@ func (g *goGen) method(it *Interface, m *Method) {
 		}
 		if m.Err {
 			g.p("\treturn err\n")
+		} else if forget == "" {
+			g.p("\t_ = err\n")
 		}
 	case m.Result.Kind == InterfaceType:
 		g.p("\tvar h uint64\n\terr := %s&h)\n", callFn)
