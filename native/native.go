@@ -21,8 +21,6 @@ import (
 	"unsafe"
 
 	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/internal/platform"
-	"github.com/egoist/mygo/internal/surface"
 )
 
 // ErrClosed is returned by the methods of an object that was closed.
@@ -67,14 +65,12 @@ func (e *Error) Is(target error) bool {
 }
 
 // View is embedded by the interfaces of a module that a view of the
-// platform implements, an NSView on macOS, which ui.NativeView shows in
-// native UI. Its methods are for MyGo.
+// platform implements, which ui.NativeView shows in native UI.
 type View interface {
-	NativeObject() *Object
-	// SurfaceWebView returns what stands for the view under the surface of
-	// conn, for package ui, which places it as it places web views. Main
-	// thread only.
-	SurfaceWebView(conn *surface.Conn) platform.WebView
+	// NativeView returns the platform's view: an NSView* on macOS. It is
+	// 0 once the view is closed, which takes it out of the windows
+	// showing it.
+	NativeView() uintptr
 }
 
 // object is what every value a module returns implements.
@@ -171,52 +167,16 @@ type Object struct {
 	// subscription, released when it closes.
 	funcs []uint64
 	flags Flags
-	// shown is where windows show the object, a view: what stands for it
-	// under their surfaces. Main thread only.
-	shown *shownViews
 }
 
-// shownViews are the surfaces a view shows under.
-type shownViews struct {
-	embeds map[*surface.Conn]platform.WebView
+// View returns the object's view, for the NativeView of the proxies of
+// views: the object itself, or 0 once closed.
+func (o *Object) View() uintptr {
+	if o == nil || o.closed.Load() {
+		return 0
+	}
+	return uintptr(o.h)
 }
-
-// close takes the view out of the windows showing it. Main thread only.
-func (s *shownViews) close() {
-	for conn, e := range s.embeds {
-		e.Close()
-		delete(s.embeds, conn)
-	}
-}
-
-// SurfaceWebView puts the object, a view, under the surface of conn, the
-// first time, and returns what stands for it there.
-func (o *Object) SurfaceWebView(conn *surface.Conn) platform.WebView {
-	if o == nil || o.closed.Load() || conn == nil {
-		return nil
-	}
-	if e, ok := o.shown.embeds[conn]; ok {
-		return e
-	}
-	vs, ok := conn.Surface.(platform.ViewSurface)
-	if !ok {
-		return nil
-	}
-	e, err := vs.EmbedView(uintptr(o.h))
-	if err != nil {
-		return nil
-	}
-	// The view leaves the surface of another window that showed it.
-	for c, other := range o.shown.embeds {
-		other.Close()
-		delete(o.shown.embeds, c)
-	}
-	o.shown.embeds[conn] = e
-	return e
-}
-
-// NativeObject returns o, so that every proxy of a module is a View.
-func (o *Object) NativeObject() *Object { return o }
 
 // Handle returns the object's handle, to pass it back to the platform.
 func (o *Object) Handle() uint64 {
@@ -229,15 +189,6 @@ func (o *Object) Handle() uint64 {
 // Module returns the module the object belongs to.
 func (o *Object) Module() *Module { return o.m }
 
-// Handle returns the handle of a value a module returned, to pass it back
-// to the platform, or 0 for nil.
-func Handle(v View) uint64 {
-	if v == nil {
-		return 0
-	}
-	return v.NativeObject().Handle()
-}
-
 // object wraps a handle the platform returned, released once the Go value
 // is unreachable unless closed before. Objects of flags MainThread are
 // released on the main thread.
@@ -245,31 +196,26 @@ func (m *Module) object(h uint64, flags Flags) *Object {
 	if h == 0 {
 		return nil
 	}
-	o := &Object{m: m, h: h, flags: flags, shown: &shownViews{embeds: map[*surface.Conn]platform.WebView{}}}
+	o := &Object{m: m, h: h, flags: flags}
 	type gone struct {
 		h     uint64
 		flags Flags
-		shown *shownViews
 	}
-	runtime.AddCleanup(o, func(g gone) { m.release(g.h, g.flags, g.shown) }, gone{h, flags, o.shown})
+	runtime.AddCleanup(o, func(g gone) { m.release(g.h, g.flags) }, gone{h, flags})
 	return o
 }
 
-// release takes the object out of the windows that show it, and lets go of
-// it.
-func (m *Module) release(h uint64, flags Flags, shown *shownViews) {
+// release lets go of the object, on the main thread for one of the main
+// thread's.
+func (m *Module) release(h uint64, flags Flags) {
 	lib, err := m.load()
 	if err != nil {
 		return
 	}
 	if flags&MainThread != 0 && mygo.App.IsReady() {
-		mygo.RunOnMain(func() {
-			shown.close()
-			lib.release(m, h)
-		})
+		mygo.RunOnMain(func() { lib.release(m, h) })
 		return
 	}
-	shown.close()
 	lib.release(m, h)
 }
 
@@ -342,7 +288,6 @@ func (o *Object) Close() error {
 	if o.flags&MainThread != 0 {
 		var cerr error
 		err = onMain(o.flags, func() {
-			o.shown.close()
 			cerr = o.m.call(context.Background(), o.h, "close", o.flags, nil, nil)
 		})
 		if err == nil {

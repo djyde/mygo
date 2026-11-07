@@ -545,9 +545,9 @@ type app struct {
 }
 
 func (a *app) view(c *ui.Context) {
-	ui.Box(c).Fill().Children(func() {
-		ui.NativeView(c, a.player).Fill()
-		// What the view paints after the native view shows over it.
+	// What the view paints after the native view, its children first,
+	// shows over it.
+	ui.NativeView(c, a.player).Fill().Children(func() {
 		ui.Text(c, captionAt(a.now)).Absolute().Left(24).Bottom(24)
 	})
 }

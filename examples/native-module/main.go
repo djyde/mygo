@@ -53,8 +53,7 @@ func (a *app) view(c *ui.Context) {
 		}
 		ui.Column(c).Grow(1).AlignSelf(ui.Stretch).Gap(12).Children(func() {
 			// What the view paints after the map shows over it.
-			ui.Box(c).Grow(1).Radius(12).Children(func() {
-				ui.NativeView(c, a.m).Fill().Radius(12)
+			ui.NativeView(c, a.m).Grow(1).Radius(12).Children(func() {
 				ui.Textf(c, "%.3f, %.3f", a.center.Latitude, a.center.Longitude).
 					Absolute().Right(8).Bottom(8).Padding(8).Background(t.Surface).Radius(6)
 			})

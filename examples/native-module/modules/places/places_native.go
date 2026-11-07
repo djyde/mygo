@@ -45,8 +45,14 @@ func NewMap() (Map, error) {
 	return &_Map{o}, nil
 }
 
-// _Map calls the platform's implementation of Map, a view.
-type _Map struct{ *native.Object }
+// _Map calls the platform's implementation of Map.
+type _Map struct{ o *native.Object }
+
+// NativeObject returns the platform's object.
+func (x *_Map) NativeObject() *native.Object { return x.o }
+
+// NativeView returns the platform's view, or 0 once closed.
+func (x *_Map) NativeView() uintptr { return x.o.View() }
 
 // _wrapMap wraps a handle of the platform's, or returns nil.
 func _wrapMap(h uint64) Map {

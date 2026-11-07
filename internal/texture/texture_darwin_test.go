@@ -7,6 +7,8 @@ import (
 
 	"github.com/ebitengine/purego"
 	"github.com/ebitengine/purego/objc"
+
+	"github.com/egoist/mygo/internal/scene"
 )
 
 // newSurface makes a w×h 32-bit BGRA IOSurface filled with b, g, r, a.
@@ -94,13 +96,13 @@ func TestPresentAndFrame(t *testing.T) {
 		t.Fatalf("Size = %v×%v", w, h)
 	}
 	img := tex.Frame(key, func() { asked++ })
-	if img == nil || img.W != 3 || img.H != 2 || img.MetalTexture == nil {
+	if img == nil || img.W != 3 || img.H != 2 || img.GPU == nil {
 		t.Fatalf("frame %+v", img)
 	}
 	if mtl, err := purego.Dlopen("/System/Library/Frameworks/Metal.framework/Metal", purego.RTLD_NOW|purego.RTLD_GLOBAL); err == nil {
 		if create, err := purego.Dlsym(mtl, "MTLCreateSystemDefaultDevice"); err == nil {
 			if device, _, _ := purego.SyscallN(create); device != 0 {
-				tex := objc.ID(img.MetalTexture(device))
+				tex := objc.ID(img.GPU.GPUTexture(scene.Metal, device))
 				if tex == 0 || tex.Send(objc.RegisterName("width")) != 3 || tex.Send(objc.RegisterName("iosurface")) != objc.ID(red) {
 					t.Errorf("the Metal texture %x does not show the surface", tex)
 				}

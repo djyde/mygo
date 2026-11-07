@@ -177,12 +177,10 @@ func (g *goGen) proxy(it *Interface) {
 		g.p("\n// New%s makes the implementation of %s on this platform. It returns\n// errors.ErrUnsupported where the module has none, or the system lacks\n// what it needs.\nfunc New%s() (%s, error) {\n", it.Name, it.Name, it.Name, it.Name)
 		g.p("\to, err := _module.New(%q, %s)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\treturn &%s{o}, nil\n}\n", it.Name, flagsOf(it.MainThread), name)
 	}
+	g.p("\n// %s calls the platform's implementation of %s.\ntype %s struct{ o *native.Object }\n", name, it.Name, name)
+	g.p("\n// NativeObject returns the platform's object.\nfunc (x *%s) NativeObject() *native.Object { return x.o }\n", name)
 	if it.View {
-		// The object's methods, promoted, make it a native.View.
-		g.p("\n// %s calls the platform's implementation of %s, a view.\ntype %s struct{ *native.Object }\n", name, it.Name, name)
-	} else {
-		g.p("\n// %s calls the platform's implementation of %s.\ntype %s struct{ o *native.Object }\n", name, it.Name, name)
-		g.p("\n// NativeObject returns the platform's object.\nfunc (x *%s) NativeObject() *native.Object { return x.o }\n", name)
+		g.p("\n// NativeView returns the platform's view, or 0 once closed.\nfunc (x *%s) NativeView() uintptr { return x.o.View() }\n", name)
 	}
 	g.p("\n// %s wraps a handle of the platform's, or returns nil.\nfunc _wrap%s(h uint64) %s {\n\tif h == 0 {\n\t\treturn nil\n\t}\n\treturn &%s{_module.Object(h, %s)}\n}\n", "_wrap"+it.Name, it.Name, it.Name, name, flagsOf(it.MainThread))
 	for _, m := range it.Methods {

@@ -119,6 +119,11 @@ func (s *surface) PlaceWebViews(views []platform.WebViewPlacement) {
 			if !ok || v.host != host || v.closed {
 				continue
 			}
+			if v.foreign && send(v.web, "superview") != v.pane {
+				// A view of a native module that another window showed
+				// since: back to this one.
+				send(v.pane, "addSubview:", uintptr(v.web))
+			}
 			c, f := p.Clip, p.Frame
 			pw, ph := p.Size()
 			msgSetRect(v.clip, sel("setFrame:"), NSRect{Origin: NSPoint{c.X, height - c.Y - c.H}, Size: NSSize{c.W, c.H}})

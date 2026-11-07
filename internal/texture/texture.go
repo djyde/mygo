@@ -133,9 +133,10 @@ func (t *Texture) Frame(key any, invalidate func()) *scene.Image {
 	}
 	if s.img == nil {
 		s.img = scene.NewImageRGBA(w, h, nil)
-		// The CPU renderer reads the surface's pixels; Metal wraps it.
+		// The CPU renderer reads the surface's pixels; GPU renderers wrap
+		// it, where they can (GPUTexture).
 		s.img.Restore = func() []byte { return readSurface(s.shown) }
-		s.img.MetalTexture = func(device uintptr) uintptr { return metalTexture(device, s.shown, s.img.W, s.img.H) }
+		s.img.GPU = s
 	}
 
 	if seq != s.shownSeq {
@@ -148,6 +149,15 @@ func (t *Texture) Frame(key any, invalidate func()) *scene.Image {
 		s.img.Changed()
 	}
 	return s.img
+}
+
+// GPUTexture wraps the surface shown in a texture of the renderer, with no
+// copy: Metal's, on macOS. Main thread only.
+func (s *state) GPUTexture(api scene.GPUAPI, device uintptr) uintptr {
+	if api != scene.Metal || s.img == nil {
+		return 0
+	}
+	return metalTexture(device, s.shown, s.img.W, s.img.H)
 }
 
 func (s *state) release() {

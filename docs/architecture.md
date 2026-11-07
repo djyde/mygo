@@ -5235,14 +5235,21 @@ interfaces Swift implements. Three parts make it work:
 - **Views.** An interface embedding `native.View` is a view of the
   platform (an `NSView` in `apple/`), its methods on the main thread; on
   platforms without an implementation its constructor returns
-  `errors.ErrUnsupported`, and `ui.NativeView` of nil is a plain box. `native.View` has `SurfaceWebView`, as
-  `ui.NativeWebView` does, so `ui.NativeView` is `ui.WebView`'s element:
-  the darwin surface hosts the view as it hosts an embedded web view
-  (`platform.ViewSurface`, `EmbedView`: a `window` whose `web` is the
-  view, `foreign`), so placing, clipping to the hole's corners, stacking,
-  hiding and the pointer's way through the surface are the web view's.
-  The proxies of views embed `*native.Object`, whose methods make them
-  `native.View`s. Objects of the main thread close and release there.
+  `errors.ErrUnsupported`, and `ui.NativeView` of nil is a plain box.
+  `native.View` has one method, `NativeView() uintptr`, the platform's
+  view (0 once closed), which `ui.PlatformView` asks for, so the public
+  API names no internal type. `ui.NativeView` is `ui.WebView`'s element
+  around a `platformView` of the window's engine, which stands for the
+  view as a `surface.WebView` and has the surface host it as it hosts an
+  embedded web view, through `viewhost.Embed`, which package native sets
+  as it initializes, so that only apps with a module link the hosting
+  (`platform.ViewSurface`, `EmbedView`: a `window`
+  whose `web` is the view, `foreign`), so placing, clipping to the
+  hole's corners, stacking, hiding and the pointer's way through the
+  surface are the web view's. Each frame drops the `platformView`s of
+  views closed (`pruneViews`); closing one also takes the `NSView` out of
+  its superview, and a view another window took is put back as its
+  window places it. Objects of the main thread close and release there.
 - **Modules that use modules.** `nativegen` loads the native modules a
   module imports (`go list -find`), qualifies their types with their Swift
   modules, and makes generated declarations `public`. Generated packages
@@ -5259,9 +5266,11 @@ interfaces Swift implements. Three parts make it work:
   surface presented last, the one shown and those of frames in flight
   (`inFlight`), each in use so that pixel buffer pools never hand them
   back to be drawn on screen, and asks the windows that drew it for a
-  frame. A frame's `scene.Image` wraps the shown surface: the Metal
-  renderer calls its `MetalTexture`, set by the texture, which wraps the
-  surface with no copy; the CPU renderer reads it through `Restore`.
+  frame. A frame's `scene.Image` wraps the shown surface: GPU renderers
+  ask its `GPU`, a `scene.GPUSource` the texture implements, for a
+  texture of their API (`scene.Metal` on macOS, which wraps the surface
+  with no copy), and draw its pixels, which `Restore` reads, where it
+  gives none, as the CPU renderer does.
 - **Prebuilt implementations** (`native_prebuild.go`): a universal
   release build packed as `.tar.gz`, uploaded with `gh` to the release
   `native-<module>-<hash>`, recorded under `native.apple` of the module's

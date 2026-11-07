@@ -967,8 +967,11 @@ func (r *Renderer) imageTexture(img *scene.Image) uintptr {
 		}
 		return 0
 	}
-	if img.MetalTexture != nil {
-		return r.surfaceTexture(img)
+	if img.GPU != nil {
+		if tex := r.gpuTexture(img); tex != 0 {
+			return tex
+		}
+		// None for Metal: its pixels, as any image's.
 	}
 	t := r.images[img.ID()]
 	if t == nil {
@@ -1005,16 +1008,16 @@ func (r *Renderer) imageTexture(img *scene.Image) uintptr {
 	return t.tex
 }
 
-// surfaceTexture returns the texture of an image whose pixels a native
-// module draws on the GPU (native.Texture): its surface, which the texture
-// wraps with no copy, wrapped again when the image shows another.
-func (r *Renderer) surfaceTexture(img *scene.Image) uintptr {
+// gpuTexture returns the texture its GPUSource gives of an image that
+// something draws on the GPU (native.Texture), made again as the image's
+// version changes, or 0 when it gives none.
+func (r *Renderer) gpuTexture(img *scene.Image) uintptr {
 	t := r.images[img.ID()]
 	if t != nil && t.ver == img.Version() && t.w == img.W && t.h == img.H {
 		t.lastFrame = r.frame
 		return t.tex
 	}
-	tex := id(img.MetalTexture(uintptr(r.device)))
+	tex := id(img.GPU.GPUTexture(scene.Metal, uintptr(r.device)))
 	if tex == 0 {
 		return 0
 	}

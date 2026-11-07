@@ -213,7 +213,13 @@ public func _mygo_Sharing_ShareFrom(_ obj: UInt64, _ args: UnsafeRawPointer?, _ 
 @_cdecl("mygo_places_close")
 public func _mygo_close(_ obj: UInt64, _ args: UnsafeRawPointer?, _ n: Int, _ call: UInt64) -> UnsafeMutableRawPointer? {
     _mygoRun {
-        if let c = _mygoAnyObject(obj) as? any Closer { try c.close() }
+        let o = _mygoAnyObject(obj)
+        if let c = o as? any Closer { try c.close() }
+        #if canImport(AppKit)
+        // A view closed leaves the windows showing it; Go closes views on
+        // the main thread.
+        if let v = o as? NSView { MainActor.assumeIsolated { v.removeFromSuperview() } }
+        #endif
         return nil
     }
 }
