@@ -106,14 +106,6 @@ implementation must satisfy, here the Swift protocol `Analyzer`, the struct
 Change the interface and every implementation stops compiling until it
 matches; forget a method and the platform's compiler names it.
 
-`examples/postcard` shows what modules can do in one small app: a map of
-MapKit shown in native UI, a postcard printed by Core Image on the GPU
-into a texture, the message read aloud word by word, and the system's
-share menu anchored to a button. `examples/lift` calls what only Swift
-reaches: Vision reads a picture of a poster, NSDataDetector finds its
-date, Foundation Models writes the event where Apple Intelligence is
-available, and EventKit adds it to the calendar.
-
 ## Create a module
 
 ```sh
