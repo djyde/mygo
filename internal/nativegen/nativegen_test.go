@@ -68,7 +68,11 @@ func TestModuleUsingAnother(t *testing.T) {
 // the generator writes now.
 func TestExampleUpToDate(t *testing.T) {
 	stale, err := Stale(example)
-	if more, err := Stale("../../examples/native-module/modules/places"); err == nil {
+	for _, m := range []string{"places", "motion"} {
+		more, err := Stale("../../examples/native-module/modules/" + m)
+		if err != nil {
+			t.Fatal(err)
+		}
 		stale = append(stale, more...)
 	}
 	if err != nil {

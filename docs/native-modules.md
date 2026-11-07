@@ -23,19 +23,6 @@ does, and each directory how. On a platform the module has no
 implementation for, its constructors return `errors.ErrUnsupported`, so the
 app compiles everywhere and decides what to do without it.
 
-<!-- repository-only:start -->
-> **Status: partly implemented.** Working: declaring the interface, its
-> methods, callbacks, types and errors, objects and subscriptions,
-> interfaces Go implements, `*mygo.Window` and `ui.Rect` arguments,
-> buffers, `mygo generate`, `mygo dev` and `mygo build` (the Swift package
-> built, put into `Contents/Frameworks` and signed, its `Info.plist` and
-> `Entitlements.plist` merged), and `mygo native new`, `add`, `check` and
-> `call`. Not yet: views (`native.View`, `ui.NativeView`), textures,
-> `NativeBufferPool`, modules that use other modules, `mygo native
-> prebuild`, and the agent skill. `mygo generate` rejects what is not
-> implemented, at its line.
-<!-- repository-only:end -->
-
 The Go side:
 
 ```go
@@ -410,6 +397,7 @@ defer e.Close()
 fmt.Println(e.Neighbors("coffee", 5))
 ```
 
+An implementation is a class: the generated protocols are `AnyObject`.
 The Go value holds a strong reference to the Swift object. An interface
 that embeds `io.Closer`, or has a `Close() error` method, is closed
 explicitly: Go calls the object's `close()`, then releases it, and every
@@ -579,7 +567,8 @@ tree, as any `NSView`. A view the window's view does not build hides and
 keeps its state.
 
 A view runs on the main thread, as AppKit wants, with no
-`//mygo:mainthread`. Its callbacks run on the main thread too; call the
+`//mygo:mainthread`. Make it once the app runs, in `App.WhenReady` or
+later; it is closed and released there too. Its callbacks run on the main thread too; call the
 window's `Invalidate` from them to show what changed.
 
 ### Windows and anchors
@@ -644,14 +633,21 @@ implementation receives the object that module returned, an `AVAsset` in
 its own class, not a copy.
 
 Go's imports are the dependencies between modules: there is nothing to add
-to `Package.swift`. `mygo dev`, `mygo build` and `mygo native check` build
-the app's modules together, as targets of one Swift package that they
-write to `.mygo/native`, each depending on the modules its Go package
-imports and on the packages its own `Package.swift` declares. Open that
-package in Xcode, or point SourceKit-LSP at it, to edit a module that uses
-others with completion. The app gets each module once, however many
-modules use it, and two modules that need incompatible versions of one
-Swift package stop the build as SwiftPM resolves them.
+to `Package.swift`. The generated declarations of a module are `public`
+for others to see; its Go package loads the modules it uses first.
+`mygo dev`, `mygo build` and `mygo native check` build the modules a
+module uses before it, each from its own Swift package, and build it
+with their Swift modules and libraries, which it links: the app gets each
+module once, however many modules use it, next to the others in
+`Contents/Frameworks`.
+
+`mygo generate` and `mygo dev` also write the app's modules as the targets
+of one Swift package, `.mygo/native`, each depending on the modules its
+Go package imports and on the packages its own `Package.swift` declares,
+its sources a link to the module's. Open that package in Xcode, or point
+SourceKit-LSP at it, to edit a module that uses others with completion;
+it builds as the app does, so two modules that need incompatible versions
+of one Swift package stop it as SwiftPM resolves them.
 
 ## Large data
 
@@ -730,7 +726,13 @@ func (a *app) view(c *ui.Context) {
 ```
 
 The window shows what Swift presents in its next frame, without the app
-calling `Invalidate`. Unlike a [view](#views), a texture is drawn by native
+calling `Invalidate`. Native UI holds the surface it shows, and those
+frames on the GPU may still read, in use (`IOSurfaceIncrementUseCount`):
+a pool of pixel buffers gives a surface to the implementation again only
+once no frame shows it, so draw each frame into a buffer of a pool rather
+than into one again and again. `displayLink`'s callback gets the host
+time the frame shows at, in seconds, as `CACurrentMediaTime` counts, and
+`invalidate()` stops it. Unlike a [view](#views), a texture is drawn by native
 UI itself: it can be covered, clipped, scaled, rotated and faded like any
 image, and drawn by a [shader](ui/shaders.md).
 
@@ -761,7 +763,10 @@ let package = Package(
 ```
 
 Keep the `<Module>` product dynamic, named after the module, with the
-generated file among its sources. Dynamic frameworks the package brings,
+generated file among its sources. The packages `mygo native new` writes
+compile in the Swift 5 language mode (`swiftLanguageModes: [.v5]`), which
+keeps Swift 6's strict checks of concurrency out of the way of
+implementations, whose classes Go calls from its own threads. Dynamic frameworks the package brings,
 such as an XCFramework's, go into the app's `Contents/Frameworks` with it,
 and `mygo build` signs them all with the app's identity.
 
@@ -807,14 +812,22 @@ To build an app on a machine without the platform's tools, such as a Linux
 runner of GitHub Actions, prebuild the modules where the tools are:
 
 ```sh
-mygo native prebuild [module dir]
+mygo native prebuild [-repo owner/name] [-no-upload] [module dir]
 ```
 
 builds the module's implementations, uploads them as release assets of the
 app's repository and records them in `mygo-plugin.json` next to the
 module, as the [terminal](plugins/terminal.md) plugin ships libghostty-vt:
 every machine then downloads those builds instead of compiling them, and
-they must change with the sources, which `mygo build` checks.
+they must change with the sources, which `mygo build` checks. It uploads
+with the [GitHub CLI](https://cli.github.com), to the release
+`native-<module>-<hash>` of the repository of the module's git checkout,
+or of `-repo`, where `<hash>` is that of the Swift package's sources;
+`-no-upload` only builds the archive. Commit `mygo-plugin.json`.
+`mygo build` takes the prebuilt implementation while its hash is the
+sources', and `mygo dev` where Swift is missing; once the sources change,
+a machine with Swift builds them, with a warning, and one without stops
+and says to prebuild again.
 
 `go test` runs the implementation of the platform it runs on once
 `mygo generate` has built it; it says to run it when the build is missing

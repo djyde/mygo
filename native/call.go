@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/internal/texture"
 )
 
 // The status of a result, in the block that carries it both ways.
@@ -29,6 +30,7 @@ const (
 	kindInvoke      = 6 // a method of an object Go implements, answered at once
 	kindInvokeAsync = 7 // one taking a context, answered with resume
 	kindCancel      = 8 // the platform canceled what kindInvokeAsync started
+	kindPresent     = 9 // a frame for a texture: id is the texture, status the IOSurfaceRef
 )
 
 type reply struct {
@@ -295,6 +297,13 @@ func handle(kind, id uint64, status int64, data []byte) (int64, []byte, bool) {
 				lib.resume(v.m, env.Cont, st, out)
 			}
 		}()
+	case kindPresent:
+		// The surface comes retained, for the texture to keep.
+		if t := texture.Lookup(id); t != nil {
+			t.Present(uintptr(status))
+		} else {
+			releaseSurface(uintptr(status))
+		}
 	case kindCancel:
 		if c, ok := asyncs.Load(id); ok {
 			c.(context.CancelFunc)()

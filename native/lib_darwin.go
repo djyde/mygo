@@ -282,3 +282,17 @@ func allocate(n int) uintptr {
 }
 
 func deallocate(p uintptr) { purego.SyscallN(libc.free, p) }
+
+// releaseSurface lets go of a surface presented to a texture that is gone.
+func releaseSurface(s uintptr) {
+	if s == 0 {
+		return
+	}
+	cf, err := purego.Dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", purego.RTLD_NOW|purego.RTLD_GLOBAL)
+	if err != nil {
+		return
+	}
+	if release, err := purego.Dlsym(cf, "CFRelease"); err == nil {
+		purego.SyscallN(release, s)
+	}
+}

@@ -189,9 +189,9 @@ func AddPlatform(dir, platform string) error {
 		return err
 	}
 	files := map[string][]byte{
-		filepath.Join(pkg, "Package.swift"):            []byte(strings.ReplaceAll(packageTemplate, "MODULE", m.Name)),
-		filepath.Join(pkg, ".gitignore"):               []byte("/.build\n/.swiftpm\n"),
-		filepath.Join(SwiftDir(m), m.Name+".swift"):     stubSwift(m),
+		filepath.Join(pkg, "Package.swift"):         []byte(strings.ReplaceAll(packageTemplate, "MODULE", m.Name)),
+		filepath.Join(pkg, ".gitignore"):            []byte("/.build\n/.swiftpm\n"),
+		filepath.Join(SwiftDir(m), m.Name+".swift"): stubSwift(m),
 	}
 	for path, data := range files {
 		if err := os.WriteFile(path, data, 0o644); err != nil {

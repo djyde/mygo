@@ -109,8 +109,8 @@ func load(dir string, loaded map[string]*Module, loading []string) (*Module, err
 		return nil, fmt.Errorf("native modules use each other in a cycle: %s", strings.Join(append(loading, abs), " → "))
 	}
 	l := &loader{
-		loaded:  loaded,
-		loading: append(loading, abs),
+		loaded:   loaded,
+		loading:  append(loading, abs),
 		fset:     token.NewFileSet(),
 		m:        &Module{Dir: abs, Imports: map[string]bool{}, Deps: map[string]*Module{}, Quals: map[string]string{}},
 		types:    map[string]*ast.TypeSpec{},
@@ -653,8 +653,11 @@ func (l *loader) typeOf(e ast.Expr, f *ast.File, where string, param bool) *Type
 			return &Type{Kind: Buffer, Go: "*native.Buffer"}
 		}
 		if isSel(x.X, f, nativePath, "Texture") {
-			l.errorf(x, "%s uses *native.Texture, which MyGo does not implement yet", where)
-			return nil
+			if !param {
+				l.errorf(x, "%s uses *native.Texture other than as a parameter: pass the texture the implementation draws into", where)
+				return nil
+			}
+			return &Type{Kind: Texture, Go: "*native.Texture"}
 		}
 		el := l.typeOf(x.X, f, where, false)
 		if el == nil {
@@ -1028,7 +1031,7 @@ func (l *loader) checkByGo(it *Interface) {
 		}
 		for _, p := range m.Params {
 			switch p.Type.Kind {
-			case Func, InterfaceType, Window, Buffer:
+			case Func, InterfaceType, Window, Buffer, Texture:
 				l.errorf(n, "%s: Go implements %s, as the module only takes it, and its methods take values that copy, not %s", where, it.Name, p.Type.Go)
 			}
 		}

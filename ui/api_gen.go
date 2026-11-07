@@ -1804,6 +1804,11 @@ func Modal(c *Context, open *bool, fn func()) Element {
 // clicked or tabbed into, as any view of the platform. A view the frame
 // does not build hides and keeps its state. Where views of the platform
 // cannot show, as in browsers, the element shows nothing.
+//
+// v is nil where the module has no implementation, its constructor having
+// returned errors.ErrUnsupported: the element is then a plain box, which
+// paints its background and children, so a view can show something else
+// in the view's place.
 func NativeView(c *Context, v NativeWebView) Element {
 	_ctx := c.build()
 	if _ctx == nil {

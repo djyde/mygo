@@ -475,6 +475,12 @@ type Image struct {
 	// nil for images that keep their pixels.
 	Restore func() []byte
 	Dropped func()
+	// MetalTexture, for an image a native module draws on the GPU
+	// (native.Texture), returns a new texture of the Metal device showing
+	// its pixels with no copy, which the renderer owns, and makes again as
+	// Version changes; other renderers draw the pixels Restore reads. A
+	// function its owner sets, so that renderers link no code of it.
+	MetalTexture func(device uintptr) uintptr
 }
 
 // NewCanvas returns a w×h image that renderers draw from a scene of its

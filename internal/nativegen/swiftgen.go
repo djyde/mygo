@@ -20,7 +20,7 @@ func GenerateSwift(m *Module) []byte {
 	var b bytes.Buffer
 	g := &swiftGen{m: m, b: &b}
 	g.p("%s// %s\n//\n// The declarations of package %s, which the implementation conforms to,\n// and the functions Go calls. See docs/native-modules.md.\n\n", swiftHeader, SourceLine(m.Hash), m.Package)
-	g.p("import Foundation\n#if canImport(AppKit)\nimport AppKit\n#endif\n")
+	g.p("import Foundation\nimport CoreVideo\nimport IOSurface\n#if canImport(AppKit)\nimport AppKit\n#endif\n")
 	for _, path := range slices.Sorted(maps.Keys(m.Deps)) {
 		g.p("import %s\n", m.Deps[path].Name)
 	}
@@ -168,6 +168,8 @@ func swiftType(t *Type) string {
 		return "CGRect"
 	case Buffer:
 		return "NativeBuffer"
+	case Texture:
+		return "NativeTexture"
 	case Func:
 		var ps []string
 		for _, p := range t.Params {

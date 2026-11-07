@@ -26,3 +26,5 @@ func LibraryName(module string) string { return "lib" + module + ".dylib" }
 
 func allocate(n int) uintptr { return 0 }
 func deallocate(p uintptr)   {}
+
+func releaseSurface(uintptr) {}

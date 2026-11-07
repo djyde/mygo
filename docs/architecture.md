@@ -5232,6 +5232,43 @@ interfaces Swift implements. Three parts make it work:
   the generated files. `mygo native call` writes a small typed program
   into the module's directory that decodes the arguments into the
   method's parameters, and runs it.
+- **Views.** An interface embedding `native.View` is a view of the
+  platform (an `NSView` in `apple/`), its methods on the main thread; on
+  platforms without an implementation its constructor returns
+  `errors.ErrUnsupported`, and `ui.NativeView` of nil is a plain box. `native.View` has `SurfaceWebView`, as
+  `ui.NativeWebView` does, so `ui.NativeView` is `ui.WebView`'s element:
+  the darwin surface hosts the view as it hosts an embedded web view
+  (`platform.ViewSurface`, `EmbedView`: a `window` whose `web` is the
+  view, `foreign`), so placing, clipping to the hole's corners, stacking,
+  hiding and the pointer's way through the surface are the web view's.
+  The proxies of views embed `*native.Object`, whose methods make them
+  `native.View`s. Objects of the main thread close and release there.
+- **Modules that use modules.** `nativegen` loads the native modules a
+  module imports (`go list -find`), qualifies their types with their Swift
+  modules, and makes generated declarations `public`. Generated packages
+  register with `native.Register`, which loads a module's dependencies
+  before it (dyld then finds their libraries loaded, by install name, when
+  it links them) and wraps another module's objects by name (`Wrap`). The
+  CLI builds dependencies first and passes `-I`, `-L` and `-l` to the
+  dependent's `swift build`; `.mygo/native` is for editors only.
+- **Textures.** `native.Texture` is `internal/texture.Texture`. `ui.Image`
+  takes it through `imagesrc.Frames`, and `ui.ImageSource` is sealed by
+  `imagesrc.Mark`, which `Bitmap`, `SVG` and textures embed, so that `ui`
+  links no texture code. Swift presents an `IOSurface` through the
+  callback (`kindPresent`, the surface retained); the texture holds the
+  surface presented last, the one shown and those of frames in flight
+  (`inFlight`), each in use so that pixel buffer pools never hand them
+  back to be drawn on screen, and asks the windows that drew it for a
+  frame. A frame's `scene.Image` wraps the shown surface: the Metal
+  renderer calls its `MetalTexture`, set by the texture, which wraps the
+  surface with no copy; the CPU renderer reads it through `Restore`.
+- **Prebuilt implementations** (`native_prebuild.go`): a universal
+  release build packed as `.tar.gz`, uploaded with `gh` to the release
+  `native-<module>-<hash>`, recorded under `native.apple` of the module's
+  `mygo-plugin.json` with the hash of its Swift package's sources
+  (`swiftSourceHash`); `moduleBuild` takes it while the hash matches, in
+  release builds and wherever Swift is missing, through the cache of
+  native libraries (`fetchNative`).
 
 ## CLI (`cmd/mygo`)
 

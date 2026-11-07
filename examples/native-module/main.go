@@ -20,7 +20,9 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/examples/native-module/modules/language"
+	"github.com/egoist/mygo/examples/native-module/modules/motion"
 	"github.com/egoist/mygo/examples/native-module/modules/places"
+	"github.com/egoist/mygo/native"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -35,6 +37,11 @@ type app struct {
 	sharing places.Sharing
 	center  places.Place
 	moved   io.Closer
+
+	// A texture the motion module draws into on the GPU, which the view
+	// shows as any image.
+	hues     *native.Texture
+	animated io.Closer
 }
 
 func (a *app) view(c *ui.Context) {
@@ -77,6 +84,12 @@ func (a *app) visit(p places.Place, span float64, greeting string) {
 }
 
 func (a *app) text_(c *ui.Context, t *ui.Theme) {
+	if a.hues != nil {
+		ui.Box(c).Width(160).Height(160).Children(func() {
+			ui.Image(c, a.hues).Fill().Radius(80)
+			ui.Text(c, "GPU").Bold().TextColor(ui.RGB(255, 255, 255)).Absolute().Left(62).Top(68)
+		})
+	}
 	ui.TextArea(c.Key("text"), &a.text).Placeholder("Type in any language…").Height(120).AutoFocus()
 	if a.err != nil {
 		ui.Text(c, a.err.Error()).TextColor(t.TextMuted)
@@ -105,6 +118,10 @@ func main() {
 	a := &app{text: "Bonjour tout le monde. Comment allez-vous ?"}
 	// errors.ErrUnsupported where a module has no implementation.
 	a.analyzer, a.err = language.NewAnalyzer()
+	if anim, err := motion.NewAnimation(); err == nil {
+		a.hues = native.NewTexture()
+		a.animated = anim.Attach(a.hues, 320)
+	}
 	mygo.App.WhenReady(func() {
 		// Views are made on the main thread, once the app runs.
 		if m, err := places.NewMap(); err == nil {

@@ -106,6 +106,79 @@ public final class NativeBufferPool: @unchecked Sendable {
     }
 }
 
+/// An image on the GPU that native UI shows: a *native.Texture. Present
+/// frames into it, IOSurfaces or CVPixelBuffers backed by them, which show
+/// in the next frame of the windows showing it.
+public final class NativeTexture: Codable, @unchecked Sendable {
+    let id: UInt64
+
+    private enum CodingKeys: String, CodingKey { case id }
+
+    public init(from decoder: any Decoder) throws {
+        id = try decoder.container(keyedBy: CodingKeys.self).decode(UInt64.self, forKey: .id)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+    }
+
+    /// The attributes of the pixel buffers native UI draws without
+    /// converting them: 32-bit BGRA, backed by IOSurfaces, for Metal.
+    public var pixelBufferAttributes: [String: Any] {
+        [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
+            kCVPixelBufferMetalCompatibilityKey as String: true,
+        ]
+    }
+
+    /// Shows surface, 32-bit BGRA, in the next frame. Native UI keeps it
+    /// until another one replaces it: draw the next frame into another
+    /// surface, as a pool of pixel buffers gives.
+    public func present(_ surface: IOSurfaceRef) {
+        let p = Unmanaged.passRetained(surface).toOpaque()
+        _mygoSend(_mygoKindPresent, id, Int64(Int(bitPattern: p)), nil)
+    }
+
+    /// Shows the IOSurface backing buffer in the next frame.
+    public func present(_ buffer: CVPixelBuffer) {
+        guard let s = CVPixelBufferGetIOSurface(buffer)?.takeUnretainedValue() else { return }
+        present(s)
+    }
+
+    /// Calls f on each refresh of the display, with the host time the
+    /// frame will show at, in seconds (as CACurrentMediaTime counts),
+    /// until the link is invalidated.
+    public func displayLink(_ f: @escaping @Sendable (CFTimeInterval) -> Void) -> NativeDisplayLink {
+        NativeDisplayLink(f)
+    }
+}
+
+/// Calls back on each refresh of the display, until invalidated.
+public final class NativeDisplayLink: @unchecked Sendable {
+    private var link: CVDisplayLink?
+
+    init(_ f: @escaping @Sendable (CFTimeInterval) -> Void) {
+        CVDisplayLinkCreateWithActiveCGDisplays(&link)
+        guard let link else { return }
+        let frequency = CVGetHostClockFrequency()
+        CVDisplayLinkSetOutputHandler(link) { _, _, out, _, _ in
+            f(Double(out.pointee.hostTime) / frequency)
+            return kCVReturnSuccess
+        }
+        CVDisplayLinkStart(link)
+    }
+
+    /// Stops the callbacks.
+    public func invalidate() {
+        if let link { CVDisplayLinkStop(link) }
+        link = nil
+    }
+
+    deinit { invalidate() }
+}
+
 // MARK: - Glue
 
 public typealias _MygoCallback = @convention(c) (UInt64, UInt64, Int64, UnsafeRawPointer?, Int) -> UnsafeMutableRawPointer?
@@ -120,6 +193,7 @@ let _mygoKindRelease: UInt64 = 5
 let _mygoKindInvoke: UInt64 = 6
 let _mygoKindInvokeAsync: UInt64 = 7
 let _mygoKindCancel: UInt64 = 8
+let _mygoKindPresent: UInt64 = 9
 
 /// Tells Go something, and returns its answer, if any.
 @discardableResult

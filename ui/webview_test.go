@@ -422,3 +422,14 @@ func TestWebViewKey(t *testing.T) {
 		t.Error("a key of another web view reached the shortcut")
 	}
 }
+
+// A nil native view, a module's where it has no implementation, is a
+// plain box: it paints its background, and punches no hole.
+func TestNativeViewNil(t *testing.T) {
+	tt := coreNewTester(func(c *context) {
+		coreNativeView(c, nil).Size(20, 20).Background(RGB(255, 0, 0))
+	}, 20, 20)
+	if got := tt.Image().RGBAAt(10, 10); got.R != 255 || got.A != 255 {
+		t.Fatalf("the nil view's box shows %v, not its background", got)
+	}
+}

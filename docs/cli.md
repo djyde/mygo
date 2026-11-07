@@ -248,16 +248,15 @@ callbacks.
 ### mygo native prebuild
 
 ```
-mygo native prebuild [module dir]
+mygo native prebuild [-repo owner/name] [-no-upload] [module dir]
 ```
 
 Builds the module's implementations, uploads them as release assets of the
-app's repository and records them in the module's `mygo-plugin.json`, so
-machines without the platforms' tools build the app with them.
-
-<!-- repository-only:start -->
-> Not implemented yet: it says so and exits with status 1.
-<!-- repository-only:end -->
+app's repository (the GitHub repository of the module's git checkout, or
+`-repo`, with the GitHub CLI) and records them in the module's
+`mygo-plugin.json`, so machines without the platforms' tools build the app
+with them while they match the sources. `-no-upload` only builds the
+archive, into `apple/.build/mygo`.
 
 `mygo generate` generates every native module of the app, and `mygo dev`
 and `mygo build` build them; see
