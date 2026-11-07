@@ -36,10 +36,20 @@ A `SymbolElement` is a `ui.Element` too: `Margin`, `Tooltip` and the rest
 work on it. Where the system has no symbol of the name (on another OS, or
 an older macOS) it draws its fallback, or nothing, at the same size.
 
+In a row aligned by baselines, a symbol sits on the text's baseline as
+SwiftUI's do, its middle halfway up the capitals of the theme's font at
+its size; a row that centers its children centers it on the text's box:
+
+```go
+ui.Row(c).AlignItems(ui.Baseline).Gap(4).Children(func() {
+	sfsymbols.Symbol(c, "xmark.circle.fill").Color(t.Danger)
+	ui.Text(c, "Failed")
+})
+```
+
 What it doesn't do, unlike SwiftUI: follow the text color of the element
-it is in (it takes the theme's, or `Color`), sit on the baseline of text
-beside it, or draw multicolor and hierarchical symbols in more than one
-color.
+it is in (it takes the theme's, or `Color`), or draw multicolor and
+hierarchical symbols in more than one color.
 
 ## Names
 

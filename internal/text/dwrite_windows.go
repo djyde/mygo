@@ -720,7 +720,7 @@ func (e *dwrite) fontOf(face uintptr, size float32) *Font {
 	var m dwFontMetrics
 	call(face, faceGetMetrics, uintptr(unsafe.Pointer(&m)))
 	em := size / float32(max(m.designUnitsPerEm, 1))
-	f := &Font{Size: size, Ascent: float32(m.ascent) * em, Descent: float32(m.descent) * em, LineGap: float32(m.lineGap) * em, native: face, thin: e.isThin(face), color: isColor(face),
+	f := &Font{Size: size, Ascent: float32(m.ascent) * em, Descent: float32(m.descent) * em, LineGap: float32(m.lineGap) * em, CapHeight: float32(m.capHeight) * em, native: face, thin: e.isThin(face), color: isColor(face),
 		underlineTop: float32(m.underlinePosition) * em, underlineThick: float32(m.underlineThickness) * em,
 		strikeTop: float32(m.strikethroughPosition) * em, strikeThick: float32(m.strikethroughThickness) * em}
 	e.own(f)

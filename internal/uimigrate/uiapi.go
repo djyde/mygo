@@ -141,6 +141,7 @@ var elementChains = map[string]bool{
 	"BackfaceHidden":       true,
 	"Background":           true,
 	"Balance":              true,
+	"Baseline":             true,
 	"Basis":                true,
 	"BasisPercent":         true,
 	"Bind":                 true,

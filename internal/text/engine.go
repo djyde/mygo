@@ -163,8 +163,9 @@ type Font struct {
 	// Size is the em size in DIPs.
 	Size float32
 	// Ascent, Descent and LineGap are the font's vertical metrics in
-	// DIPs.
-	Ascent, Descent, LineGap float32
+	// DIPs, and CapHeight how high its capital letters stand above the
+	// baseline, 0 where the engine can't tell.
+	Ascent, Descent, LineGap, CapHeight float32
 
 	native uintptr // the engine's font
 	// data is what an engine keeps of the font in Go, which lives as long

@@ -139,6 +139,7 @@ var pangoLib struct {
 	fontGetHBFont             func(font uintptr) uintptr
 	hbNominalGlyph            func(font uintptr, r rune, glyph *uint32) int32
 	hbGlyphHAdvance           func(font uintptr, glyph uint32) int32
+	hbOTMetricsPosition       func(font uintptr, tag uint32, pos *int32) int32
 	metricsGetAscent          func(metrics uintptr) int32
 	metricsGetUnderlinePos    func(metrics uintptr) int32
 	metricsGetUnderlineThick  func(metrics uintptr) int32
@@ -358,6 +359,7 @@ func loadPango() error {
 	if hb, err := open("libharfbuzz.so.0"); err == nil {
 		bind(hb, &l.hbNominalGlyph, "hb_font_get_nominal_glyph")
 		bind(hb, &l.hbGlyphHAdvance, "hb_font_get_glyph_h_advance")
+		bind(hb, &l.hbOTMetricsPosition, "hb_ot_metrics_get_position") // HarfBuzz 2.6
 	}
 	if ft, err := open("libpangoft2-1.0.so.0"); err == nil {
 		bind(ft, &l.fontMapConfigChanged, "pango_fc_font_map_config_changed")
@@ -697,8 +699,28 @@ func (e *pangoEngine) fontOf(font uintptr) *Font {
 		}
 		l.metricsUnref(m)
 	}
+	f.CapHeight = e.capHeight(font)
 	e.fonts[font] = f
 	return f
+}
+
+// hbCapHeight is HarfBuzz's HB_OT_METRICS_TAG_CAP_HEIGHT, 'cpht'.
+const hbCapHeight = 'c'<<24 | 'p'<<16 | 'h'<<8 | 't'
+
+// capHeight returns the cap height of a PangoFont in DIPs, from the
+// font's OS/2 table as HarfBuzz reads it, or 0 where HarfBuzz is older
+// than 2.6. Pango's HarfBuzz fonts are scaled in Pango units.
+func (e *pangoEngine) capHeight(font uintptr) float32 {
+	l := &pangoLib
+	if l.fontGetHBFont == nil || l.hbOTMetricsPosition == nil {
+		return 0
+	}
+	hb := l.fontGetHBFont(font)
+	var pos int32
+	if hb == 0 || l.hbOTMetricsPosition(hb, hbCapHeight, &pos) == 0 {
+		return 0
+	}
+	return float32(pos) / pangoScale
 }
 
 func (e *pangoEngine) shape(text []rune, style Style, spans []Span, width float32, rtl, wholeWords bool) []shapedLine {

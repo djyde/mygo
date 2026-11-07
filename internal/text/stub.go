@@ -22,7 +22,7 @@ func (e *stubEngine) font(style Style) *Font {
 	if e.fonts == nil {
 		e.fonts = map[float32]*Font{}
 	}
-	f := &Font{Size: size, Ascent: size * 0.8, Descent: size * 0.2}
+	f := &Font{Size: size, Ascent: size * 0.8, Descent: size * 0.2, CapHeight: size * 0.7}
 	e.fonts[size] = f
 	return f
 }

@@ -3769,6 +3769,22 @@ func (_handle Element) Balance() Element {
 	return wrapElement(_node.Balance())
 }
 
+// Baseline puts the element's baseline y DIPs below its top, where a row
+// aligned by its baselines (AlignItems(Baseline)) lines it up, in place of
+// that of its first line of text or its first child: an icon beside text
+// declares where the text's baseline goes through it.
+//
+//	ui.Box(c).Size(13, 13).Baseline(11.1)
+func (_handle Element) Baseline(y float32) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.Baseline(y))
+}
+
 // Basis sets the size along the parent's main axis before growing or
 // shrinking.
 func (_handle Element) Basis(v float32) Element {

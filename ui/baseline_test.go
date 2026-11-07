@@ -67,6 +67,34 @@ func TestBaselineSelf(t *testing.T) {
 	}
 }
 
+// An element declaring its baseline (Baseline) lines it up with the
+// text's, in place of its bottom, and a row centering its children
+// still centers it.
+func TestBaselineDeclared(t *testing.T) {
+	for _, align := range []Align{Baseline, Center} {
+		var row, icon, label *node
+		coreNewTester(func(c *context) {
+			row = coreRow(c).AlignItems(align).Gap(4).Children(func() {
+				icon = coreBox(c).Size(13, 13).Baseline(11)
+				label = coreText(c, "Failed").FontSize(13)
+			})
+		}, 400, 300)
+		lb := label.y + label.contentY() + label.tl.Lines[0].Baseline
+		if align == Center {
+			if d := (icon.y + icon.h/2) - (label.y + label.h/2); math.Abs(float64(d)) > 0.01 {
+				t.Errorf("centered, the icon's middle is %v below the text's", d)
+			}
+			continue
+		}
+		if d := icon.y + 11 - lb; math.Abs(float64(d)) > 0.01 {
+			t.Errorf("the icon's baseline is %v below the text's", d)
+		}
+		if want := max(icon.y+icon.h, label.y+label.h) - row.y; math.Abs(float64(row.h-want)) > 0.01 {
+			t.Errorf("the row is %v high, want %v", row.h, want)
+		}
+	}
+}
+
 // In a grid, the items of a row aligned by their baselines line them up,
 // and the row is as high as that takes; elements without text line up
 // their bottoms.

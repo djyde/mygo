@@ -84,6 +84,12 @@ ui.Row(c).AlignItems(ui.Baseline).Gap(4).Children(func() {
 })
 ```
 
+An element without text can say where its baseline is instead:
+`Baseline(y)` puts it `y` DIPs below the element's top, as an icon
+beside text whose middle should sit halfway up the capitals
+(`Font.Metrics().CapHeight`). [SF Symbols](../plugins/sfsymbols.md) set
+theirs so.
+
 ## Positioning
 
 `Absolute` takes an element out of the flow, placed with `Top`, `Right`,

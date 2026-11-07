@@ -310,6 +310,10 @@ type layoutStyle struct {
 	// baselines is set on the row of a field in a form, which lines up
 	// the first lines of its label and control.
 	baselines bool
+	// ownBaseline is where the element's baseline is below its top, in
+	// place of its text's or its children's (Baseline); unitAuto for
+	// those.
+	ownBaseline length
 
 	maxLines   int
 	single     bool
@@ -1089,6 +1093,14 @@ func (e *node) AlignItems(a Align) *node { e.align = a; return e }
 // the parent's AlignItems; in a grid, it places the element in its cell
 // vertically.
 func (e *node) AlignSelf(a Align) *node { e.self = a; return e }
+
+// Baseline puts the element's baseline y DIPs below its top, where a row
+// aligned by its baselines (AlignItems(Baseline)) lines it up, in place of
+// that of its first line of text or its first child: an icon beside text
+// declares where the text's baseline goes through it.
+//
+//	ui.Box(c).Size(13, 13).Baseline(11.1)
+func (e *node) Baseline(y float32) *node { e.ownBaseline = px(y); return e }
 
 // Center centers the children along and across the main axis.
 func (e *node) Center() *node { e.justify, e.align = Center, Center; return e }

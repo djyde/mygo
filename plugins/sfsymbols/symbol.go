@@ -23,6 +23,7 @@ type symbol struct {
 	fill     bool
 	natural  bool
 	fallback *ui.SVG
+	font     string // the theme's, for the baseline
 }
 
 // Symbol shows the SF Symbol named name, as SwiftUI's
@@ -35,21 +36,31 @@ type symbol struct {
 //
 // Where the system has no symbol of that name, on another OS or a macOS
 // without it, it draws its Fallback, or nothing, at the same size.
+//
+// In a row aligned by baselines (AlignItems(ui.Baseline)) it sits on the
+// text's baseline as SwiftUI's symbols do, its middle halfway up the
+// capital letters of the theme's font at its size.
 func Symbol(c *ui.Context, name string) SymbolElement {
 	t := c.Theme()
-	s := &symbol{name: name, color: t.Text}
+	s := &symbol{name: name, color: t.Text, font: t.Font}
 	size := t.FontSize
 	if size <= 0 {
 		size = 13
 	}
-	e := ui.Box(c).Size(size, size).Shrink(0).Role(ui.RoleImage).Label(name)
+	e := ui.Box(c).Shrink(0).Role(ui.RoleImage).Label(name)
 	e.Draw(s.paint)
-	return SymbolElement{Element: e, s: s}
+	return SymbolElement{Element: e, s: s}.Size(size)
 }
 
 // Size sets the symbol's box, size DIPs square.
 func (e SymbolElement) Size(size float32) SymbolElement {
 	e.Element.Size(size, size)
+	if e.s != nil {
+		// The symbol's ink is centered in its box: the box's middle goes
+		// halfway up the capitals, as SwiftUI places a symbol in text.
+		capHeight := ui.Font{Family: e.s.font, Size: size}.Metrics().CapHeight
+		e.Element.Baseline((size + capHeight) / 2)
+	}
 	return e
 }
 

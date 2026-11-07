@@ -1083,6 +1083,18 @@ func (s *System) Metrics(style Style) (ascent, descent, lineHeight float32) {
 	return m.ascent, m.descent, m.lineHeight
 }
 
+// CapHeight returns how high the capital letters of a style's font stand
+// above the baseline: the font's own cap height, or 0.7 em where the
+// engine can't tell.
+func (s *System) CapHeight(style Style) float32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if f := s.font(style); f != nil && f.CapHeight > 0 {
+		return f.CapHeight
+	}
+	return 0.7 * style.FontSize()
+}
+
 // font returns the font of a style.
 func (s *System) font(style Style) *Font {
 	key := Style{Family: style.Family, Size: style.FontSize(), Weight: style.weight(), Italic: style.Italic}

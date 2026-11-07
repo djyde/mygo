@@ -183,6 +183,9 @@ func (e *canvasEngine) font(style Style) *Font {
 		f.strikeTop = size * 0.3
 	}
 	f.strikeThick = thick
+	if h := e.ctx.Call("measureText", "H").Get("actualBoundingBoxAscent"); h.Type() == js.TypeNumber {
+		f.CapHeight = float32(h.Float())
+	}
 	e.fonts[css] = f
 	return f
 }
