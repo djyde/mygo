@@ -116,7 +116,7 @@ func TestPrebuiltNativeModule(t *testing.T) {
 	if lib, _ := os.ReadFile(b.dylib); string(lib) != "a library" || len(b.frameworks) != 1 {
 		t.Fatalf("build %+v", b)
 	}
-	if link, err := os.Readlink(filepath.Join(b.frameworks[0], "Dep")); err != nil || link != "Versions/A/Dep" {
+	if link, err := os.Readlink(filepath.Join(b.frameworks[0], "Dep")); err != nil || filepath.ToSlash(link) != "Versions/A/Dep" {
 		t.Fatalf("the framework's link: %q, %v", link, err)
 	}
 
