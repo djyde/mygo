@@ -159,14 +159,26 @@ func untar(archive, dir string) error {
 		case tar.TypeDir:
 			err = os.MkdirAll(path, 0o755)
 		case tar.TypeSymlink:
-			if !filepath.IsLocal(filepath.Join(filepath.Dir(name), h.Linkname)) {
-				return fmt.Errorf("the archive links %s out of it", h.Name)
+			// The target, from the link's own directory, stays in the
+			// archive: an absolute one never does.
+			target := filepath.FromSlash(h.Linkname)
+			if filepath.IsAbs(target) || h.Linkname == "" || !filepath.IsLocal(filepath.Join(filepath.Dir(name), target)) {
+				return fmt.Errorf("the archive links %s to %s, out of it", h.Name, h.Linkname)
 			}
 			if err = os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
 				err = os.Symlink(h.Linkname, path)
 			}
 		case tar.TypeReg:
 			if err = os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				break
+			}
+			// Nor through a link it made before.
+			var real string
+			if real, err = filepath.EvalSymlinks(filepath.Dir(path)); err != nil {
+				break
+			}
+			if root, rerr := filepath.EvalSymlinks(tmp); rerr != nil || (real != root && !strings.HasPrefix(real, root+string(filepath.Separator))) {
+				err = fmt.Errorf("the archive writes %s out of it", h.Name)
 				break
 			}
 			var w *os.File

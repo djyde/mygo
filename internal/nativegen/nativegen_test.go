@@ -123,6 +123,7 @@ func TestDiagnostics(t *testing.T) {
 		{"//mygo:native\ntype A interface{ M(s S) }\ntype S struct{ Next *S }\n", "S contains itself"},
 		{"//mygo:native\ntype A interface{ M(g G) }\ntype G interface{ N(f func()) }\n", "Go implements G"},
 		{"//mygo:frob\ntype A interface{ M() }\n", "unknown directive //mygo:frob"},
+		{"//mygo:native\ntype A interface{ M(_x int) }\n", "names a parameter _x: the generated code keeps names starting with _"},
 		{"//mygo:native\ntype A interface{ M() }\nvar ErrX = native.NewError(\"\")\n", ""},
 	} {
 		dir := t.TempDir()
@@ -178,5 +179,43 @@ func TestScaffoldBuilds(t *testing.T) {
 	}
 	if strings.Contains(string(out), "warning:") {
 		t.Errorf("swift build warns:\n%s", out)
+	}
+}
+
+// TestNamesDontClash generates a module whose parameters are named as the
+// generated code names its own identifiers and packages: its Go must vet,
+// and its Swift build, where Swift is.
+func TestNamesDontClash(t *testing.T) {
+	dir, err := os.MkdirTemp("testdata", "clash-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	src, err := os.ReadFile("testdata/clash/clash.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "clash.go"), src, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Generate(dir); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("go", "vet", "./"+dir).CombinedOutput()
+	if err != nil {
+		t.Fatalf("go vet of the generated Go: %v\n%s", err, out)
+	}
+	if runtime.GOOS != "darwin" || testing.Short() {
+		return
+	}
+	if _, err := exec.LookPath("swift"); err != nil {
+		return
+	}
+	if err := AddPlatform(dir, "apple"); err != nil {
+		t.Fatal(err)
+	}
+	out, err = exec.Command("swift", "build", "--package-path", filepath.Join(dir, "apple")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("swift build: %v\n%s", err, out)
 	}
 }

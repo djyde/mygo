@@ -111,8 +111,9 @@ public enum LanguageError: String, Error, Sendable, CaseIterable {
 // MARK: - What Go calls
 
 @_cdecl("mygo_language_init")
-public func _mygo_init(_ cb: _MygoCallback) {
+public func _mygo_init(_ cb: _MygoCallback, _ idBase: UInt64) {
     _mygoCallback = cb
+    _mygoIDBase = idBase
 }
 
 @_cdecl("mygo_language_new_Analyzer")
@@ -379,17 +380,18 @@ public func _mygo_Embedding_Neighbors(_ obj: UInt64, _ args: UnsafeRawPointer?, 
 
 /// Calls a Go value implementing Ranker.
 final class _GoRanker: Ranker, @unchecked Sendable {
-    let id: UInt64
+    // Named as no parameter of the interface's may be.
+    let _mygoID: UInt64
     init(_ id: UInt64) {
         if id == 0 { fatalError("Language: Go passed nil for Ranker") }
-        self.id = id
+        _mygoID = id
     }
-    deinit { _mygoSend(_mygoKindRelease, id, 0, nil) }
+    deinit { _mygoSend(_mygoKindRelease, _mygoID, 0, nil) }
     func score(word: String) -> Double {
-        return _mygoMust { try _mygoInvoke(id, 0, _mygoArgs(word), Double.self) }
+        return _mygoMust { try _mygoInvoke(_mygoID, 0, _mygoArgs(word), Double.self) }
     }
     func explain(word: String) async throws -> String {
-        return try await _mygoInvokeAsync(id, 1, _mygoArgs(word), String.self)
+        return try await _mygoInvokeAsync(_mygoID, 1, _mygoArgs(word), String.self)
     }
 }
 
@@ -884,12 +886,15 @@ let _mygoConts = _MygoTable<CheckedContinuation<(Int64, Data), Never>>()
 
 private let _mygoIDLock = NSLock()
 nonisolated(unsafe) private var _mygoLastID: UInt64 = 0
+/// The module's index, from Go, in the high bits of every id, which makes
+/// the ids of continuations unique among modules.
+nonisolated(unsafe) var _mygoIDBase: UInt64 = 0
 
 func _mygoNextID() -> UInt64 {
     _mygoIDLock.lock()
     defer { _mygoIDLock.unlock() }
     _mygoLastID += 1
-    return _mygoLastID
+    return _mygoIDBase | _mygoLastID
 }
 
 func _mygoFinish(_ call: UInt64, _ body: () async throws -> Data?) async {
@@ -969,9 +974,8 @@ final class _MygoGoFunc: @unchecked Sendable {
     }
 }
 
-func _mygoEnvelope(_ method: Int, _ args: Data, cont: UInt64? = nil) -> Data {
+func _mygoEnvelope(_ method: Int, _ args: Data) -> Data {
     var out = Data("{\"m\":\(method),".utf8)
-    if let cont { out.append(contentsOf: Array("\"c\":\(cont),".utf8)) }
     out.append(contentsOf: Array("\"a\":".utf8))
     out.append(args)
     out.append(contentsOf: Array("}".utf8))
@@ -988,7 +992,7 @@ func _mygoInvokeAsync<R: Decodable>(_ id: UInt64, _ method: Int, _ args: Data, _
     let (st, d) = await withTaskCancellationHandler {
         await withCheckedContinuation { (c: CheckedContinuation<(Int64, Data), Never>) in
             _mygoConts.put(cont, c)
-            _mygoSend(_mygoKindInvokeAsync, id, 0, _mygoEnvelope(method, args, cont: cont))
+            _mygoSend(_mygoKindInvokeAsync, id, Int64(bitPattern: cont), _mygoEnvelope(method, args))
         }
     } onCancel: {
         _mygoSend(_mygoKindCancel, cont, 0, nil)

@@ -5,32 +5,33 @@ package places
 
 import (
 	"io"
-	"path/filepath"
-	"runtime"
+	_filepath "path/filepath"
+	_runtime "runtime"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/examples/native-module/modules/language"
 	"github.com/egoist/mygo/native"
+	_native "github.com/egoist/mygo/native"
 	"github.com/egoist/mygo/ui"
 )
 
-// _module is the module's description, for package native.
-var _module = &native.Module{Name: "Places", Symbol: "places", MinMacOS: "13", Dir: _dir(), Errors: []*native.Error{}, Deps: []string{"Language"}}
+// _module describes the module to the runtime.
+var _module = &_native.Module{Name: "Places", Symbol: "places", MinMacOS: "13", Dir: _dir(), Errors: []*_native.Error{}, Deps: []string{"Language"}}
 
 // _dir returns the package's directory when the binary knows it, where
 // mygo generate builds the implementation for go test and go run.
 func _dir() string {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok || !filepath.IsAbs(file) {
+	_, file, _, ok := _runtime.Caller(0)
+	if !ok || !_filepath.IsAbs(file) {
 		return ""
 	}
-	return filepath.Dir(file)
+	return _filepath.Dir(file)
 }
 
 func init() {
-	native.Register(_module, map[string]native.Wrapper{
-		"Map":     {Flags: native.MainThread, Wrap: func(o *native.Object) any { return &_Map{o} }},
-		"Sharing": {Flags: native.MainThread, Wrap: func(o *native.Object) any { return &_Sharing{o} }},
+	_native.Register(_module, map[string]_native.Wrapper{
+		"Map":     {Flags: _native.MainThread, Wrap: func(o *_native.Object) any { return &_Map{o} }},
+		"Sharing": {Flags: _native.MainThread, Wrap: func(o *_native.Object) any { return &_Sharing{o} }},
 	})
 }
 
@@ -38,7 +39,7 @@ func init() {
 // errors.ErrUnsupported where the module has none, or the system lacks
 // what it needs.
 func NewMap() (Map, error) {
-	o, err := _module.New("Map", native.MainThread)
+	o, err := _module.New("Map", _native.MainThread)
 	if err != nil {
 		return nil, err
 	}
@@ -46,10 +47,10 @@ func NewMap() (Map, error) {
 }
 
 // _Map calls the platform's implementation of Map.
-type _Map struct{ o *native.Object }
+type _Map struct{ o *_native.Object }
 
 // NativeObject returns the platform's object.
-func (x *_Map) NativeObject() *native.Object { return x.o }
+func (x *_Map) NativeObject() *_native.Object { return x.o }
 
 // NativeView returns the platform's view, or 0 once closed.
 func (x *_Map) NativeView() uintptr { return x.o.View() }
@@ -59,46 +60,47 @@ func _wrapMap(h uint64) Map {
 	if h == 0 {
 		return nil
 	}
-	return &_Map{_module.Object(h, native.MainThread)}
+	return &_Map{_module.Object(h, _native.MainThread)}
 }
 
-func (x *_Map) Show(p Place, span float64) {
-	err := x.NativeObject().Call("Map_Show", native.MainThread, []any{p, span}, nil)
-	_ = err
+func (_x *_Map) Show(p Place, span float64) {
+	_err := _x.NativeObject().Call("Map_Show", _native.MainThread, []any{p, span}, nil)
+	_ = _err
 }
 
-func (x *_Map) Center() Place {
-	var r Place
-	err := x.NativeObject().Call("Map_Center", native.MainThread, nil, &r)
-	_ = err
-	return r
+func (_x *_Map) Center() Place {
+	var _r Place
+	_err := _x.NativeObject().Call("Map_Center", _native.MainThread, nil, &_r)
+	_ = _err
+	return _r
 }
 
-func (x *_Map) Pin(p Place, a language.Analyzer, text string) {
-	err := x.NativeObject().Call("Map_Pin", native.MainThread, []any{p, native.HandleOf(a), text}, nil)
-	_ = err
+func (_x *_Map) Pin(p Place, a language.Analyzer, text string) {
+	defer _runtime.KeepAlive(a)
+	_err := _x.NativeObject().Call("Map_Pin", _native.MainThread, []any{p, _native.HandleOf(a), text}, nil)
+	_ = _err
 }
 
-func (x *_Map) OnMove(f func(center Place)) io.Closer {
+func (_x *_Map) OnMove(f func(center Place)) io.Closer {
 	var _f0 uint64
 	if f != nil {
-		_f0 = native.Func(func(a native.Args) (any, error) {
-			var p0 Place
-			if err := a.Decode(0, &p0); err != nil {
-				return nil, err
+		_f0 = _native.Func(func(_a _native.Args) (any, error) {
+			var _p0 Place
+			if _err := _a.Decode(0, &_p0); _err != nil {
+				return nil, _err
 			}
-			f(p0)
+			f(_p0)
 			return nil, nil
 		}, true)
 	}
-	return x.NativeObject().Subscribe("Map_OnMove", native.MainThread, []any{_f0}, _f0)
+	return _x.NativeObject().Subscribe("Map_OnMove", _native.MainThread, []any{_f0}, _f0)
 }
 
 // NewSharing makes the implementation of Sharing on this platform. It returns
 // errors.ErrUnsupported where the module has none, or the system lacks
 // what it needs.
 func NewSharing() (Sharing, error) {
-	o, err := _module.New("Sharing", native.MainThread)
+	o, err := _module.New("Sharing", _native.MainThread)
 	if err != nil {
 		return nil, err
 	}
@@ -106,25 +108,26 @@ func NewSharing() (Sharing, error) {
 }
 
 // _Sharing calls the platform's implementation of Sharing.
-type _Sharing struct{ o *native.Object }
+type _Sharing struct{ o *_native.Object }
 
 // NativeObject returns the platform's object.
-func (x *_Sharing) NativeObject() *native.Object { return x.o }
+func (x *_Sharing) NativeObject() *_native.Object { return x.o }
 
 // _wrapSharing wraps a handle of the platform's, or returns nil.
 func _wrapSharing(h uint64) Sharing {
 	if h == 0 {
 		return nil
 	}
-	return &_Sharing{_module.Object(h, native.MainThread)}
+	return &_Sharing{_module.Object(h, _native.MainThread)}
 }
 
-func (x *_Sharing) Share(win *mygo.Window, rect ui.Rect, text string) {
-	err := x.NativeObject().Call("Sharing_Share", native.MainThread, []any{native.WindowHandle(win), rect, text}, nil)
-	_ = err
+func (_x *_Sharing) Share(win *mygo.Window, rect ui.Rect, text string) {
+	_err := _x.NativeObject().Call("Sharing_Share", _native.MainThread, []any{_native.WindowHandle(win), rect, text}, nil)
+	_ = _err
 }
 
-func (x *_Sharing) ShareFrom(view native.View, text string) {
-	err := x.NativeObject().Call("Sharing_ShareFrom", native.MainThread, []any{native.HandleOf(view), text}, nil)
-	_ = err
+func (_x *_Sharing) ShareFrom(view native.View, text string) {
+	defer _runtime.KeepAlive(view)
+	_err := _x.NativeObject().Call("Sharing_ShareFrom", _native.MainThread, []any{_native.HandleOf(view), text}, nil)
+	_ = _err
 }

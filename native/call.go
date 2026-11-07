@@ -226,15 +226,31 @@ func notify(fn func()) {
 }
 
 // asyncs are the calls of Go's methods taking a context that the platform
-// is waiting for, by its continuation.
+// is waiting for, by its continuation. A continuation's id is unique in
+// the process: its high bits are its module's index (Module.index), which
+// Go gives each module as it loads it.
 var asyncs sync.Map // uint64 → context.CancelFunc
+
+// contBits is where a continuation's module index starts.
+const contBits = 48
+
+// modules are the modules loaded, by index.
+var modules sync.Map // uint64 → *Module
+
+// moduleOf returns the module of a continuation, or nil.
+func moduleOf(cont uint64) *Module {
+	m, ok := modules.Load(cont >> contBits)
+	if !ok {
+		return nil
+	}
+	return m.(*Module)
+}
 
 // invokeEnvelope is what the platform sends to call a method of an
 // object Go implements.
 type invokeEnvelope struct {
-	Cont   uint64 `json:"c"`
-	Method int    `json:"m"`
-	Args   Args   `json:"a"`
+	Method int  `json:"m"`
+	Args   Args `json:"a"`
 }
 
 // handle answers the platform; the block it returns, if any, is the answer
@@ -281,21 +297,29 @@ func handle(kind, id uint64, status int64, data []byte) (int64, []byte, bool) {
 		}
 		return answer(v.dispatch(context.Background(), env.Method, env.Args))
 	case kindInvokeAsync:
+		// status is the continuation, which waits for an answer even
+		// when there is no method to call.
+		cont := uint64(status)
+		m := moduleOf(cont)
 		v := lookupGo(id)
 		var env invokeEnvelope
 		err := json.Unmarshal(data, &env)
-		if v == nil || err != nil {
+		if v == nil {
+			err = ErrClosed
+		}
+		if err != nil {
+			if m != nil {
+				go resume(m, cont, statusError, encodeError(err))
+			}
 			return 0, nil, false
 		}
 		ctx, cancel := context.WithCancel(context.Background())
-		asyncs.Store(env.Cont, cancel)
+		asyncs.Store(cont, cancel)
 		go func() {
 			defer cancel()
 			st, out, _ := answer(v.dispatch(ctx, env.Method, env.Args))
-			asyncs.Delete(env.Cont)
-			if lib, err := v.m.load(); err == nil {
-				lib.resume(v.m, env.Cont, st, out)
-			}
+			asyncs.Delete(cont)
+			resume(v.m, cont, st, out)
 		}()
 	case kindPresent:
 		// The surface comes retained, for the texture to keep.
@@ -310,6 +334,13 @@ func handle(kind, id uint64, status int64, data []byte) (int64, []byte, bool) {
 		}
 	}
 	return 0, nil, false
+}
+
+// resume answers the continuation cont of module m.
+func resume(m *Module, cont uint64, status int64, data []byte) {
+	if lib, err := m.load(); err == nil {
+		lib.resume(m, cont, status, data)
+	}
 }
 
 func answer(v any, err error) (int64, []byte, bool) {

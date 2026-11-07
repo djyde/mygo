@@ -32,9 +32,9 @@ type state struct {
 	pending uintptr
 	seq     uint64
 	w, h    int
-	// watch asks the windows that showed the texture for a frame, by
-	// their key.
-	watch map[any]func()
+	// watch asks the windows that show the texture for a frame, by their
+	// key.
+	watch map[any]*watcher
 
 	// Main thread only: the image frames draw, and the surface it shows,
 	// retained.
@@ -51,6 +51,18 @@ type state struct {
 // and one more).
 const inFlight = 3
 
+// watcher is a window that drew the texture: invalidate asks it for a
+// frame, and seen is the present it drew last.
+type watcher struct {
+	invalidate func()
+	seen       uint64
+}
+
+// staleAfter is how many presents a window may let pass without drawing
+// the texture before it no longer counts as showing it. It draws it again
+// as it shows it again, which watches it again.
+const staleAfter = 128
+
 var (
 	lastID   atomic.Uint64
 	textures sync.Map // uint64 → weak.Pointer[Texture]
@@ -58,7 +70,7 @@ var (
 
 // New makes a texture, which shows nothing until a frame is presented.
 func New() *Texture {
-	t := &Texture{id: lastID.Add(1), s: &state{watch: map[any]func(){}}}
+	t := &Texture{id: lastID.Add(1), s: &state{watch: map[any]*watcher{}}}
 	textures.Store(t.id, weak.Make(t))
 	runtime.AddCleanup(t, func(s *state) { s.release() }, t.s)
 	return t
@@ -98,8 +110,13 @@ func (t *Texture) Present(surface uintptr) {
 	s.pending, s.w, s.h = surface, w, h
 	s.seq++
 	watch := make([]func(), 0, len(s.watch))
-	for _, f := range s.watch {
-		watch = append(watch, f)
+	for key, w := range s.watch {
+		if s.seq-w.seen > staleAfter {
+			// Its window stopped drawing it, or is gone.
+			delete(s.watch, key)
+			continue
+		}
+		watch = append(watch, w.invalidate)
 	}
 	s.mu.Unlock()
 	releaseSurface(old)
@@ -122,7 +139,11 @@ func (t *Texture) Size() (w, h float32) {
 func (t *Texture) Frame(key any, invalidate func()) *scene.Image {
 	s := t.s
 	s.mu.Lock()
-	s.watch[key] = invalidate
+	if w := s.watch[key]; w != nil {
+		w.invalidate, w.seen = invalidate, s.seq
+	} else {
+		s.watch[key] = &watcher{invalidate: invalidate, seen: s.seq}
+	}
 	surface, seq, w, h := s.pending, s.seq, s.w, s.h
 	if surface != 0 && seq != s.shownSeq {
 		retainSurface(surface)

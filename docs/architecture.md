@@ -5196,8 +5196,18 @@ interfaces Swift implements. Three parts make it work:
   `<Module>Error`, the `@_cdecl` entry points and the glue in
   `support.go`). Both carry `mygo:native <version> <hash>`, the hash of the
   package's type, const and error declarations with their comments, which
-  `mygo build` compares (`Stale`). The scaffolds of `mygo native new` and
-  `add` are in `write.go`.
+  `mygo build` compares (`Stale`). The generated Go names its own
+  identifiers with a leading underscore (`_x`, `_ctx`, `_err`, `_r`, `_h`,
+  `_fN`, `_gN`, and the packages it calls, imported as `_native`,
+  `_runtime`, `_context`, `_fmt`, `_filepath`), and the parser rejects
+  parameters named so, so that no parameter clashes with them; the
+  signatures keep the interface's names. An argument that stands for
+  memory or an object of the platform's (a buffer, a module's object, a
+  view) is kept reachable until the platform is done with it: the call
+  returns, or, for a stream, the stream ends. A stream's arguments are
+  made as its loop starts, and the callbacks and values of Go's among
+  them forgotten if it does not start (`native.Stream`'s `prepare`). The
+  scaffolds of `mygo native new` and `add` are in `write.go`.
 - **`native`** is the runtime the generated Go calls, imported only by
   modules, so apps without one link none of it. On macOS it `dlopen`s
   `lib<Module>.dylib`: from the bundle's `Contents/Frameworks`, then
@@ -5212,22 +5222,32 @@ interfaces Swift implements. Three parts make it work:
   asynchronous calls and values of streams, by call id; notifications and
   questions of callbacks, by the handle of a Go function; calls of methods
   of Go values, at once, or on a goroutine answered through
-  `mygo_<m>_resume`; and releases. A stream is pulled: Go calls
+  `mygo_<m>_resume`, by a continuation that `status` carries, so that Go
+  answers it, with an error, even where it has no method to call; and
+  releases. Continuations' ids are unique in the process: their high bits
+  are the module's index (`contBits`), which Go gives each module as it
+  loads it (`mygo_<m>_init`). A stream is pulled: Go calls
   `mygo_<m>_next` for each value, so a lent `NativeBuffer` stays valid
   until the loop continues, and canceling the call cancels the Swift task.
   Objects are `Unmanaged` retains on the Swift side, released by `Close`
-  or a `runtime.AddCleanup`. Notifications run in order on one goroutine,
+  or a `runtime.AddCleanup`; objects of the main thread are released
+  there, posted through `App.WhenReady`, never waited for on the
+  runtime's one goroutine of cleanups. Notifications run in order on one goroutine,
   through `mygo.RunOnMain` once the app runs. Main-thread methods run
   through `RunOnMain`, or directly on the main goroutine before `App.Run`,
   and in Swift under `MainActor.assumeIsolated`.
-- **The CLI** (`cmd/mygo/native.go`) finds the app's modules among
-  `go list -deps` (a package with a generated `_native.go`), regenerates
+- **The CLI** (`cmd/mygo/native.go`) finds the app's modules among the
+  packages it is built from (a package with a generated `_native.go`),
+  listed once per build and target with the native libraries' packages
+  (`Config.packageDirs`), so that apps without a module list nothing
+  more, regenerates
   them in `generate` and `dev` or refuses stale ones in `build`, runs
   `swift build` (debug for the host, or release for the target's
   architectures, both at once for universal), copies the dylib and the
   frameworks its package brings into `Contents/Frameworks`, which
   `codesign --deep` signs, and merges the modules' `Info.plist` and
-  `Entitlements.plist` (`mergePlist`) under the app's own keys. `mygo dev`
+  `Entitlements.plist` (`mergePlist`) under the app's own keys, which
+  settle the modules' conflicts. `mygo dev`
   watches `apple/Package.swift`, the plists and `apple/Sources`, but not
   the generated files. `mygo native call` writes a small typed program
   into the module's directory that decodes the arguments into the
@@ -5246,10 +5266,13 @@ interfaces Swift implements. Three parts make it work:
   (`platform.ViewSurface`, `EmbedView`: a `window`
   whose `web` is the view, `foreign`), so placing, clipping to the
   hole's corners, stacking, hiding and the pointer's way through the
-  surface are the web view's. Each frame drops the `platformView`s of
-  views closed (`pruneViews`); closing one also takes the `NSView` out of
-  its superview, and a view another window took is put back as its
-  window places it. Objects of the main thread close and release there.
+  surface are the web view's. A `platformView` holds the view by its
+  handle, never its Go value, so a view the app lets go of is released;
+  `native` tells the windows hosting a view as it closes or is released
+  (`viewGone`, the function `Embed` was given), which drop it
+  (`pruneViews`). Closing one also takes the `NSView` out of its
+  superview, and a view another window took is put back as its window
+  places it. Objects of the main thread close and release there.
 - **Modules that use modules.** `nativegen` loads the native modules a
   module imports (`go list -find`), qualifies their types with their Swift
   modules, and makes generated declarations `public`. Generated packages
@@ -5266,18 +5289,22 @@ interfaces Swift implements. Three parts make it work:
   surface presented last, the one shown and those of frames in flight
   (`inFlight`), each in use so that pixel buffer pools never hand them
   back to be drawn on screen, and asks the windows that drew it for a
-  frame. A frame's `scene.Image` wraps the shown surface: GPU renderers
+  frame, those that drew it within the last `staleAfter` presents: the
+  others no longer show it, until they draw it again. A frame's `scene.Image` wraps the shown surface: GPU renderers
   ask its `GPU`, a `scene.GPUSource` the texture implements, for a
   texture of their API (`scene.Metal` on macOS, which wraps the surface
   with no copy), and draw its pixels, which `Restore` reads, where it
-  gives none, as the CPU renderer does.
+  gives none, as the CPU renderer does, into a texture of their own: the
+  Metal renderer marks the textures a source gave (`texture.gpu`) and
+  never uploads pixels into one.
 - **Prebuilt implementations** (`native_prebuild.go`): a universal
   release build packed as `.tar.gz`, uploaded with `gh` to the release
   `native-<module>-<hash>`, recorded under `native.apple` of the module's
   `mygo-plugin.json` with the hash of its Swift package's sources
   (`swiftSourceHash`); `moduleBuild` takes it while the hash matches, in
   release builds and wherever Swift is missing, through the cache of
-  native libraries (`fetchNative`).
+  native libraries (`fetchNative`), unpacked with no path or link that
+  leads out of its directory (`untar`).
 
 ## CLI (`cmd/mygo`)
 

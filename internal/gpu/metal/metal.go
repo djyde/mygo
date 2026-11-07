@@ -345,6 +345,9 @@ type texture struct {
 	w, h      int
 	gen, ver  uint64
 	lastFrame uint64
+	// gpu marks an image's texture that its GPUSource gave, which shows
+	// memory of its own (an IOSurface): never one to upload pixels into.
+	gpu bool
 }
 
 // drawState is what drawing scenes into a target keeps from frame to
@@ -974,6 +977,13 @@ func (r *Renderer) imageTexture(img *scene.Image) uintptr {
 		// None for Metal: its pixels, as any image's.
 	}
 	t := r.images[img.ID()]
+	if t != nil && t.gpu {
+		// The texture its GPUSource gave before: pixels go to one of
+		// their own.
+		release(&t.tex)
+		delete(r.images, img.ID())
+		t = nil
+	}
 	if t == nil {
 		pix := img.Pixels()
 		if pix == nil {
@@ -1013,7 +1023,7 @@ func (r *Renderer) imageTexture(img *scene.Image) uintptr {
 // version changes, or 0 when it gives none.
 func (r *Renderer) gpuTexture(img *scene.Image) uintptr {
 	t := r.images[img.ID()]
-	if t != nil && t.ver == img.Version() && t.w == img.W && t.h == img.H {
+	if t != nil && t.gpu && t.ver == img.Version() && t.w == img.W && t.h == img.H {
 		t.lastFrame = r.frame
 		return t.tex
 	}
@@ -1025,9 +1035,10 @@ func (r *Renderer) gpuTexture(img *scene.Image) uintptr {
 		t = &texture{}
 		r.images[img.ID()] = t
 	} else {
+		// The previous frame's, or a texture of its pixels.
 		release(&t.tex)
 	}
-	t.tex, t.w, t.h, t.ver, t.lastFrame = tex, img.W, img.H, img.Version(), r.frame
+	t.tex, t.w, t.h, t.ver, t.lastFrame, t.gpu = tex, img.W, img.H, img.Version(), r.frame, true
 	return t.tex
 }
 

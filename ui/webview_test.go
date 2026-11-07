@@ -439,8 +439,9 @@ type fakeView struct{ h uintptr }
 
 func (v *fakeView) NativeView() uintptr { return v.h }
 
-// A view closed leaves the window: the frames after forget it.
-func TestNativeViewClosed(t *testing.T) {
+// A view gone, closed or released, leaves the window: the frames after
+// forget it. The window holds no Go value of it.
+func TestNativeViewGone(t *testing.T) {
 	v := &fakeView{h: 1}
 	show := true
 	tt := coreNewTester(func(c *context) {
@@ -448,7 +449,7 @@ func TestNativeViewClosed(t *testing.T) {
 			coreNativeView(c, v).Size(20, 20)
 		}
 	}, 20, 20)
-	if len(tt.rt.platformViews) != 1 {
+	if len(tt.rt.platformViews) != 1 || tt.rt.platformViews[0].h != 1 {
 		t.Fatalf("%d views stand for the one shown", len(tt.rt.platformViews))
 	}
 	// Hidden, it keeps its state: it stays.
@@ -457,9 +458,15 @@ func TestNativeViewClosed(t *testing.T) {
 	if len(tt.rt.platformViews) != 1 {
 		t.Fatal("a view the frame does not build was dropped")
 	}
-	v.h = 0 // closed
+	tt.rt.platformViews[0].leave() // as native tells of it
 	tt.Frame()
 	if len(tt.rt.platformViews) != 0 {
-		t.Fatal("a view closed is still in the window")
+		t.Fatal("a view gone is still in the window")
+	}
+	// A closed view, whose handle is 0, is a plain box.
+	v.h, show = 0, true
+	tt.Frame()
+	if len(tt.rt.platformViews) != 0 {
+		t.Fatal("a closed view came back")
 	}
 }

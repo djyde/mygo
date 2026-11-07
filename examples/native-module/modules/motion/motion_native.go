@@ -5,28 +5,29 @@ package motion
 
 import (
 	"io"
-	"path/filepath"
-	"runtime"
+	_filepath "path/filepath"
+	_runtime "runtime"
 
 	"github.com/egoist/mygo/native"
+	_native "github.com/egoist/mygo/native"
 )
 
-// _module is the module's description, for package native.
-var _module = &native.Module{Name: "Motion", Symbol: "motion", MinMacOS: "13", Dir: _dir(), Errors: []*native.Error{}, Deps: []string{}}
+// _module describes the module to the runtime.
+var _module = &_native.Module{Name: "Motion", Symbol: "motion", MinMacOS: "13", Dir: _dir(), Errors: []*_native.Error{}, Deps: []string{}}
 
 // _dir returns the package's directory when the binary knows it, where
 // mygo generate builds the implementation for go test and go run.
 func _dir() string {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok || !filepath.IsAbs(file) {
+	_, file, _, ok := _runtime.Caller(0)
+	if !ok || !_filepath.IsAbs(file) {
 		return ""
 	}
-	return filepath.Dir(file)
+	return _filepath.Dir(file)
 }
 
 func init() {
-	native.Register(_module, map[string]native.Wrapper{
-		"Animation": {Flags: 0, Wrap: func(o *native.Object) any { return &_Animation{o} }},
+	_native.Register(_module, map[string]_native.Wrapper{
+		"Animation": {Flags: 0, Wrap: func(o *_native.Object) any { return &_Animation{o} }},
 	})
 }
 
@@ -42,10 +43,10 @@ func NewAnimation() (Animation, error) {
 }
 
 // _Animation calls the platform's implementation of Animation.
-type _Animation struct{ o *native.Object }
+type _Animation struct{ o *_native.Object }
 
 // NativeObject returns the platform's object.
-func (x *_Animation) NativeObject() *native.Object { return x.o }
+func (x *_Animation) NativeObject() *_native.Object { return x.o }
 
 // _wrapAnimation wraps a handle of the platform's, or returns nil.
 func _wrapAnimation(h uint64) Animation {
@@ -55,6 +56,6 @@ func _wrapAnimation(h uint64) Animation {
 	return &_Animation{_module.Object(h, 0)}
 }
 
-func (x *_Animation) Attach(tex *native.Texture, size int) io.Closer {
-	return x.NativeObject().Subscribe("Animation_Attach", 0, []any{tex, size})
+func (_x *_Animation) Attach(tex *native.Texture, size int) io.Closer {
+	return _x.NativeObject().Subscribe("Animation_Attach", 0, []any{tex, size})
 }

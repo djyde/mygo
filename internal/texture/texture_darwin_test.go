@@ -131,5 +131,14 @@ func TestPresentAndFrame(t *testing.T) {
 	if n := useCount(t, red); n != 0 {
 		t.Errorf("the red surface is still in use %d times", n)
 	}
+
+	// A window that stops drawing the texture stops being asked to.
+	asked = 0
+	for range 2 * staleAfter {
+		tex.Present(newSurface(t, 1, 1, [4]byte{}))
+	}
+	if asked > staleAfter || len(tex.s.watch) != 0 {
+		t.Errorf("a window that no longer draws the texture was asked %d times, and %d windows watch it", asked, len(tex.s.watch))
+	}
 	purego.SyscallN(iosurface.release, red)
 }

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -32,10 +34,10 @@ func TestMergeModulePlists(t *testing.T) {
 	}
 	merged := map[string]any{}
 	owners := map[string]string{}
-	if err := mergePlist(merged, a, "modules/a", owners, ""); err != nil {
+	if err := mergePlist(merged, a, "modules/a", owners, nil, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := mergePlist(merged, b, "modules/b", owners, ""); err != nil {
+	if err := mergePlist(merged, b, "modules/b", owners, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if groups := merged["com.apple.security.application-groups"].([]any); len(groups) != 2 {
@@ -45,9 +47,14 @@ func TestMergeModulePlists(t *testing.T) {
 		t.Errorf("merged = %v", merged)
 	}
 	c := map[string]any{"NSSpeechRecognitionUsageDescription": "Other words."}
-	err = mergePlist(merged, c, "modules/c", owners, "")
-	if err == nil || !strings.Contains(err.Error(), "modules/a and modules/c") {
+	err = mergePlist(merged, c, "modules/c", owners, nil, "")
+	if err == nil || !strings.Contains(err.Error(), "native modules modules/a and modules/c set NSSpeechRecognitionUsageDescription") {
 		t.Errorf("conflicting modules: %v", err)
+	}
+	// The app setting the key settles it.
+	app := map[string]bool{"NSSpeechRecognitionUsageDescription": true}
+	if err := mergePlist(merged, c, "modules/c", owners, app, ""); err != nil {
+		t.Errorf("a key the app sets still conflicts: %v", err)
 	}
 }
 
@@ -150,5 +157,62 @@ func TestNativePackageDependencies(t *testing.T) {
 	x := m.target("X")
 	if got := x.Dependencies[0].decl() + " " + x.Dependencies[1].decl(); got != `.product(name: "Collections", package: "swift-collections") "Algorithms"` {
 		t.Errorf("target dependencies: %s", got)
+	}
+}
+
+func TestUntarStaysInside(t *testing.T) {
+	outside := t.TempDir()
+	for name, entries := range map[string][]tar.Header{
+		"absolute link": {
+			{Name: "lib", Typeflag: tar.TypeSymlink, Linkname: outside},
+			{Name: "lib/authorized_keys", Typeflag: tar.TypeReg, Mode: 0o644},
+		},
+		"link up": {
+			{Name: "a/lib", Typeflag: tar.TypeSymlink, Linkname: "../../.."},
+		},
+		"path up": {
+			{Name: "../x", Typeflag: tar.TypeReg, Mode: 0o644},
+		},
+	} {
+		archive := filepath.Join(t.TempDir(), "a.tar.gz")
+		f, err := os.Create(archive)
+		if err != nil {
+			t.Fatal(err)
+		}
+		z := gzip.NewWriter(f)
+		w := tar.NewWriter(z)
+		for _, h := range entries {
+			h := h
+			if err := w.WriteHeader(&h); err != nil {
+				t.Fatal(err)
+			}
+		}
+		w.Close()
+		z.Close()
+		f.Close()
+		if err := untar(archive, filepath.Join(t.TempDir(), "out")); err == nil {
+			t.Errorf("%s: unpacked", name)
+		}
+		if entries, _ := os.ReadDir(outside); len(entries) > 0 {
+			t.Fatalf("%s: wrote %s outside", name, entries[0].Name())
+		}
+	}
+	// A link inside, as frameworks have, unpacks.
+	archive := filepath.Join(t.TempDir(), "ok.tar.gz")
+	f, _ := os.Create(archive)
+	z := gzip.NewWriter(f)
+	w := tar.NewWriter(z)
+	for _, h := range []tar.Header{
+		{Name: "F.framework/Versions/A/F", Typeflag: tar.TypeReg, Mode: 0o755},
+		{Name: "F.framework/F", Typeflag: tar.TypeSymlink, Linkname: "Versions/A/F"},
+	} {
+		h := h
+		w.WriteHeader(&h)
+	}
+	w.Close()
+	z.Close()
+	f.Close()
+	if err := untar(archive, filepath.Join(t.TempDir(), "out")); err != nil {
+		t.Errorf("a framework's link: %v", err)
 	}
 }

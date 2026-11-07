@@ -3,6 +3,7 @@ package language_test
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -111,6 +112,37 @@ func TestObjects(t *testing.T) {
 	}
 	if err := e.Close(); !errors.Is(err, native.ErrClosed) {
 		t.Fatalf("second Close: %v; want ErrClosed", err)
+	}
+}
+
+// An object passed to a stream stays alive until the stream ends, though
+// the caller keeps no reference to it.
+func TestObjectArgumentKeptAlive(t *testing.T) {
+	a := analyzer(t)
+	ctx := wait.Context(t)
+	embedding := func() language.Embedding {
+		e, err := a.Embedding(ctx, "en")
+		if err != nil {
+			t.Skip("no English embedding:", err)
+		}
+		return e
+	}
+	for range 5 {
+		n := 0
+		for w, err := range a.Suggest(ctx, embedding(), "coffee", ranker{}) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w == "" {
+				t.Fatal("an empty suggestion")
+			}
+			n++
+			runtime.GC()
+			runtime.GC()
+		}
+		if n < 2 {
+			t.Fatalf("%d suggestions", n)
+		}
 	}
 }
 

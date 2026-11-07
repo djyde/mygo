@@ -212,8 +212,13 @@ func (m *Module) release(h uint64, flags Flags) {
 	if err != nil {
 		return
 	}
-	if flags&MainThread != 0 && mygo.App.IsReady() {
-		mygo.RunOnMain(func() { lib.release(m, h) })
+	if flags&MainThread != 0 {
+		// Posted, never waited for: the runtime runs cleanups on one
+		// goroutine. Before the app runs, it waits for it to.
+		mygo.App.WhenReady(func() {
+			viewGone(uintptr(h))
+			lib.release(m, h)
+		})
 		return
 	}
 	lib.release(m, h)
@@ -266,7 +271,8 @@ func (o *Object) Subscribe(sym string, flags Flags, args []any, funcs ...uint64)
 	var h uint64
 	err := o.Call(sym, flags, args, &h)
 	if err != nil || h == 0 {
-		releaseFuncs(funcs)
+		// The platform kept none of them.
+		Forget(funcs...)
 		return nopCloser{err}
 	}
 	c := o.m.object(h, flags)
@@ -288,6 +294,7 @@ func (o *Object) Close() error {
 	if o.flags&MainThread != 0 {
 		var cerr error
 		err = onMain(o.flags, func() {
+			viewGone(uintptr(o.h))
 			cerr = o.m.call(context.Background(), o.h, "close", o.flags, nil, nil)
 		})
 		if err == nil {
@@ -302,14 +309,19 @@ func (o *Object) Close() error {
 }
 
 // Stream calls a method that returns a stream, as an iterator that starts
-// it.
-func Stream[T any](ctx context.Context, o *Object, sym string, flags Flags, args []any) iter.Seq2[T, error] {
-	return StreamMap(ctx, o, sym, flags, args, func(v T) T { return v })
+// it. prepare makes the call's arguments as the loop starts, and returns
+// the handles of the callbacks and values of Go's among them, which are
+// forgotten if the stream does not start; keep are the arguments that
+// stand for memory or objects of the platform's, kept reachable until the
+// stream ends.
+func Stream[T any](ctx context.Context, o *Object, sym string, flags Flags, prepare func() ([]any, []uint64), keep ...any) iter.Seq2[T, error] {
+	return StreamMap(ctx, o, sym, flags, prepare, func(v T) T { return v }, keep...)
 }
 
 // StreamMap is Stream for values that cross as D and are given to Go as T.
-func StreamMap[D, T any](ctx context.Context, o *Object, sym string, flags Flags, args []any, conv func(D) T) iter.Seq2[T, error] {
+func StreamMap[D, T any](ctx context.Context, o *Object, sym string, flags Flags, prepare func() ([]any, []uint64), conv func(D) T, keep ...any) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
+		defer runtime.KeepAlive(keep)
 		var zero T
 		if o.closed.Load() {
 			yield(zero, ErrClosed)
@@ -319,8 +331,10 @@ func StreamMap[D, T any](ctx context.Context, o *Object, sym string, flags Flags
 			yield(zero, err)
 			return
 		}
+		args, funcs := prepare()
 		s, err := o.m.startStream(o.h, sym, flags, args)
 		if err != nil {
+			Forget(funcs...)
 			yield(zero, err)
 			return
 		}

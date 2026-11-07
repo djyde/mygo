@@ -5,33 +5,35 @@ package language
 
 import (
 	"context"
-	"fmt"
+	_context "context"
+	_fmt "fmt"
 	"io"
 	"iter"
-	"path/filepath"
-	"runtime"
+	_filepath "path/filepath"
+	_runtime "runtime"
 	"time"
 
 	"github.com/egoist/mygo/native"
+	_native "github.com/egoist/mygo/native"
 )
 
-// _module is the module's description, for package native.
-var _module = &native.Module{Name: "Language", Symbol: "language", MinMacOS: "13", Dir: _dir(), Errors: []*native.Error{ErrUndetermined, ErrNoEmbedding}, Deps: []string{}}
+// _module describes the module to the runtime.
+var _module = &_native.Module{Name: "Language", Symbol: "language", MinMacOS: "13", Dir: _dir(), Errors: []*_native.Error{ErrUndetermined, ErrNoEmbedding}, Deps: []string{}}
 
 // _dir returns the package's directory when the binary knows it, where
 // mygo generate builds the implementation for go test and go run.
 func _dir() string {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok || !filepath.IsAbs(file) {
+	_, file, _, ok := _runtime.Caller(0)
+	if !ok || !_filepath.IsAbs(file) {
 		return ""
 	}
-	return filepath.Dir(file)
+	return _filepath.Dir(file)
 }
 
 func init() {
-	native.Register(_module, map[string]native.Wrapper{
-		"Analyzer":  {Flags: 0, Wrap: func(o *native.Object) any { return &_Analyzer{o} }},
-		"Embedding": {Flags: 0, Wrap: func(o *native.Object) any { return &_Embedding{o} }},
+	_native.Register(_module, map[string]_native.Wrapper{
+		"Analyzer":  {Flags: 0, Wrap: func(o *_native.Object) any { return &_Analyzer{o} }},
+		"Embedding": {Flags: 0, Wrap: func(o *_native.Object) any { return &_Embedding{o} }},
 	})
 }
 
@@ -47,10 +49,10 @@ func NewAnalyzer() (Analyzer, error) {
 }
 
 // _Analyzer calls the platform's implementation of Analyzer.
-type _Analyzer struct{ o *native.Object }
+type _Analyzer struct{ o *_native.Object }
 
 // NativeObject returns the platform's object.
-func (x *_Analyzer) NativeObject() *native.Object { return x.o }
+func (x *_Analyzer) NativeObject() *_native.Object { return x.o }
 
 // _wrapAnalyzer wraps a handle of the platform's, or returns nil.
 func _wrapAnalyzer(h uint64) Analyzer {
@@ -60,100 +62,106 @@ func _wrapAnalyzer(h uint64) Analyzer {
 	return &_Analyzer{_module.Object(h, 0)}
 }
 
-func (x *_Analyzer) DetectLanguage(text string) (string, error) {
-	var r string
-	err := x.NativeObject().Call("Analyzer_DetectLanguage", 0, []any{text}, &r)
-	return r, err
+func (_x *_Analyzer) DetectLanguage(text string) (string, error) {
+	var _r string
+	_err := _x.NativeObject().Call("Analyzer_DetectLanguage", 0, []any{text}, &_r)
+	return _r, _err
 }
 
-func (x *_Analyzer) Hypotheses(text string, max int) (map[string]float64, error) {
-	var r map[string]float64
-	err := x.NativeObject().Call("Analyzer_Hypotheses", 0, []any{text, max}, &r)
-	return r, err
+func (_x *_Analyzer) Hypotheses(text string, max int) (map[string]float64, error) {
+	var _r map[string]float64
+	_err := _x.NativeObject().Call("Analyzer_Hypotheses", 0, []any{text, max}, &_r)
+	return _r, _err
 }
 
-func (x *_Analyzer) Tokens(ctx context.Context, text string, unit Unit) iter.Seq2[Token, error] {
-	return native.Stream[Token](ctx, x.NativeObject(), "Analyzer_Tokens", 0, []any{text, unit})
+func (_x *_Analyzer) Tokens(_ctx context.Context, text string, unit Unit) iter.Seq2[Token, error] {
+	return _native.Stream[Token](_ctx, _x.NativeObject(), "Analyzer_Tokens", 0, func() ([]any, []uint64) {
+		return []any{text, unit}, nil
+	})
 }
 
-func (x *_Analyzer) Embedding(ctx context.Context, language string) (Embedding, error) {
-	var h uint64
-	err := x.NativeObject().CallContext(ctx, "Analyzer_Embedding", 0, []any{language}, &h)
-	if err != nil {
-		return nil, err
+func (_x *_Analyzer) Embedding(_ctx context.Context, language string) (Embedding, error) {
+	var _h uint64
+	_err := _x.NativeObject().CallContext(_ctx, "Analyzer_Embedding", 0, []any{language}, &_h)
+	if _err != nil {
+		return nil, _err
 	}
-	return _wrapEmbedding(h), nil
+	return _wrapEmbedding(_h), nil
 }
 
-func (x *_Analyzer) Suggest(ctx context.Context, e Embedding, word string, r Ranker) iter.Seq2[string, error] {
-	var _g2 uint64
-	if r != nil {
-		_g2 = native.Export(_module, r, func(ctx context.Context, m int, a native.Args) (any, error) { return _dispatchRanker(r, ctx, m, a) })
-	}
-	return native.Stream[string](ctx, x.NativeObject(), "Analyzer_Suggest", 0, []any{native.HandleOf(e), word, _g2})
+func (_x *_Analyzer) Suggest(_ctx context.Context, e Embedding, word string, r Ranker) iter.Seq2[string, error] {
+	return _native.Stream[string](_ctx, _x.NativeObject(), "Analyzer_Suggest", 0, func() ([]any, []uint64) {
+		var _g2 uint64
+		if r != nil {
+			_g2 = _native.Export(_module, r, func(_c _context.Context, _m int, _a _native.Args) (any, error) { return _dispatchRanker(r, _c, _m, _a) })
+		}
+		return []any{_native.HandleOf(e), word, _g2}, []uint64{_g2}
+	}, e)
 }
 
-func (x *_Analyzer) Count(text string, progress func(word string, index int)) int {
+func (_x *_Analyzer) Count(text string, progress func(word string, index int)) int {
 	var _f1 uint64
 	if progress != nil {
-		_f1 = native.Func(func(a native.Args) (any, error) {
-			var p0 string
-			if err := a.Decode(0, &p0); err != nil {
-				return nil, err
+		_f1 = _native.Func(func(_a _native.Args) (any, error) {
+			var _p0 string
+			if _err := _a.Decode(0, &_p0); _err != nil {
+				return nil, _err
 			}
-			var p1 int
-			if err := a.Decode(1, &p1); err != nil {
-				return nil, err
+			var _p1 int
+			if _err := _a.Decode(1, &_p1); _err != nil {
+				return nil, _err
 			}
-			progress(p0, p1)
+			progress(_p0, _p1)
 			return nil, nil
 		}, true)
 	}
-	var r int
-	err := x.NativeObject().Call("Analyzer_Count", 0, []any{text, _f1}, &r)
-	if err != nil {
-		native.Forget(_f1)
+	var _r int
+	_err := _x.NativeObject().Call("Analyzer_Count", 0, []any{text, _f1}, &_r)
+	if _err != nil {
+		_native.Forget(_f1)
 	}
-	_ = err
-	return r
+	_ = _err
+	return _r
 }
 
-func (x *_Analyzer) Ticks(interval time.Duration, f func(n int)) io.Closer {
+func (_x *_Analyzer) Ticks(interval time.Duration, f func(n int)) io.Closer {
 	var _f1 uint64
 	if f != nil {
-		_f1 = native.Func(func(a native.Args) (any, error) {
-			var p0 int
-			if err := a.Decode(0, &p0); err != nil {
-				return nil, err
+		_f1 = _native.Func(func(_a _native.Args) (any, error) {
+			var _p0 int
+			if _err := _a.Decode(0, &_p0); _err != nil {
+				return nil, _err
 			}
-			f(p0)
+			f(_p0)
 			return nil, nil
 		}, true)
 	}
-	return x.NativeObject().Subscribe("Analyzer_Ticks", 0, []any{interval, _f1}, _f1)
+	return _x.NativeObject().Subscribe("Analyzer_Ticks", 0, []any{interval, _f1}, _f1)
 }
 
-func (x *_Analyzer) Uppercase(text string, buf *native.Buffer) (int, error) {
-	defer runtime.KeepAlive(buf)
-	var r int
-	err := x.NativeObject().Call("Analyzer_Uppercase", 0, []any{text, buf}, &r)
-	return r, err
+func (_x *_Analyzer) Uppercase(text string, buf *native.Buffer) (int, error) {
+	defer _runtime.KeepAlive(buf)
+	var _r int
+	_err := _x.NativeObject().Call("Analyzer_Uppercase", 0, []any{text, buf}, &_r)
+	return _r, _err
 }
 
-func (x *_Analyzer) Chunks(ctx context.Context, text string, size int) iter.Seq2[*native.Buffer, error] {
-	return native.Stream[*native.Buffer](ctx, x.NativeObject(), "Analyzer_Chunks", 0, []any{text, size})
+func (_x *_Analyzer) Chunks(_ctx context.Context, text string, size int) iter.Seq2[*native.Buffer, error] {
+	return _native.Stream[*native.Buffer](_ctx, _x.NativeObject(), "Analyzer_Chunks", 0, func() ([]any, []uint64) {
+		return []any{text, size}, nil
+	})
 }
 
-func (x *_Analyzer) Sleep(ctx context.Context, d time.Duration) error {
-	err := x.NativeObject().CallContext(ctx, "Analyzer_Sleep", 0, []any{d}, nil)
-	return err
+func (_x *_Analyzer) Sleep(_ctx context.Context, d time.Duration) error {
+	_err := _x.NativeObject().CallContext(_ctx, "Analyzer_Sleep", 0, []any{d}, nil)
+	return _err
 }
 
 // _Embedding calls the platform's implementation of Embedding.
-type _Embedding struct{ o *native.Object }
+type _Embedding struct{ o *_native.Object }
 
 // NativeObject returns the platform's object.
-func (x *_Embedding) NativeObject() *native.Object { return x.o }
+func (x *_Embedding) NativeObject() *_native.Object { return x.o }
 
 // _wrapEmbedding wraps a handle of the platform's, or returns nil.
 func _wrapEmbedding(h uint64) Embedding {
@@ -163,39 +171,39 @@ func _wrapEmbedding(h uint64) Embedding {
 	return &_Embedding{_module.Object(h, 0)}
 }
 
-func (x *_Embedding) Close() error {
-	return x.NativeObject().Close()
+func (_x *_Embedding) Close() error {
+	return _x.NativeObject().Close()
 }
 
-func (x *_Embedding) Distance(a string, b string) float64 {
-	var r float64
-	err := x.NativeObject().Call("Embedding_Distance", 0, []any{a, b}, &r)
-	_ = err
-	return r
+func (_x *_Embedding) Distance(a string, b string) float64 {
+	var _r float64
+	_err := _x.NativeObject().Call("Embedding_Distance", 0, []any{a, b}, &_r)
+	_ = _err
+	return _r
 }
 
-func (x *_Embedding) Neighbors(word string, n int) []string {
-	var r []string
-	err := x.NativeObject().Call("Embedding_Neighbors", 0, []any{word, n}, &r)
-	_ = err
-	return r
+func (_x *_Embedding) Neighbors(word string, n int) []string {
+	var _r []string
+	_err := _x.NativeObject().Call("Embedding_Neighbors", 0, []any{word, n}, &_r)
+	_ = _err
+	return _r
 }
 
-// _dispatchRanker calls the method number m of v for the platform.
-func _dispatchRanker(v Ranker, ctx context.Context, m int, a native.Args) (any, error) {
-	switch m {
+// _dispatchRanker calls the method number _m of _v for the platform.
+func _dispatchRanker(_v Ranker, _ctx _context.Context, _m int, _a _native.Args) (any, error) {
+	switch _m {
 	case 0:
-		var p0 string
-		if err := a.Decode(0, &p0); err != nil {
-			return nil, err
+		var _p0 string
+		if _err := _a.Decode(0, &_p0); _err != nil {
+			return nil, _err
 		}
-		return v.Score(p0), nil
+		return _v.Score(_p0), nil
 	case 1:
-		var p0 string
-		if err := a.Decode(0, &p0); err != nil {
-			return nil, err
+		var _p0 string
+		if _err := _a.Decode(0, &_p0); _err != nil {
+			return nil, _err
 		}
-		return v.Explain(ctx, p0)
+		return _v.Explain(_ctx, _p0)
 	}
-	return nil, fmt.Errorf("native: Ranker has no method %d", m)
+	return nil, _fmt.Errorf("native: Ranker has no method %d", _m)
 }

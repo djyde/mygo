@@ -50,18 +50,12 @@ type nativeBuild struct {
 // appNativeModules returns the directories of the native modules among the
 // packages of the app for goos/goarch.
 func appNativeModules(c *Config, goos, goarch string) ([]string, error) {
-	arch := goarch
-	if goarch == "universal" {
-		arch = "arm64"
-	}
-	var out, stderr bytes.Buffer
-	cmd := goCommand(c.root, []string{"GOOS=" + goos, "GOARCH=" + arch}, "list", "-e", "-deps", "-f", "{{if not .Standard}}{{.Dir}}{{end}}", c.Main)
-	cmd.Stdout, cmd.Stderr = &out, &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("go list: %v\n%s", err, strings.TrimSpace(stderr.String()))
+	all, err := c.packageDirs(goos, goarch)
+	if err != nil {
+		return nil, err
 	}
 	var dirs []string
-	for _, dir := range strings.Fields(out.String()) {
+	for _, dir := range all {
 		if nativegen.IsModule(dir) {
 			dirs = append(dirs, dir)
 		}
@@ -98,6 +92,26 @@ func prepareNative(c *Config, goos, goarch string, mode nativeMode) (err error) 
 		}()
 	}
 	app := &nativeApp{}
+	// Which module set each key, across the modules, and the keys the app
+	// sets itself, which win over theirs and settle their conflicts.
+	owners := map[string]map[string]string{"Info.plist": {}, "Entitlements.plist": {}}
+	appKeys := map[string]map[string]bool{"Info.plist": {}, "Entitlements.plist": {}}
+	for k := range c.MacOS.InfoPlist {
+		appKeys["Info.plist"][k] = true
+	}
+	if c.MacOS.Entitlements != "" {
+		data, err := os.ReadFile(c.path(c.MacOS.Entitlements))
+		if err != nil {
+			return err
+		}
+		own, err := parsePlist(data)
+		if err != nil {
+			return fmt.Errorf("%s: %w", c.MacOS.Entitlements, err)
+		}
+		for k := range own {
+			appKeys["Entitlements.plist"][k] = true
+		}
+	}
 	for _, dir := range dirs {
 		rel := relPathTo(c.root, dir)
 		if mode == nativeDev {
@@ -143,8 +157,8 @@ func prepareNative(c *Config, goos, goarch string, mode nativeMode) (err error) 
 			if *kind.dst == nil {
 				*kind.dst = map[string]any{}
 			}
-			if err := mergePlist(*kind.dst, d, rel, map[string]string{}, ""); err != nil {
-				return err
+			if err := mergePlist(*kind.dst, d, rel, owners[kind.file], appKeys[kind.file], ""); err != nil {
+				return fmt.Errorf("%s: %w", kind.file, err)
 			}
 		}
 	}
@@ -408,7 +422,7 @@ func nativeEntitlements(c *Config, dir string) (string, error) {
 // by key, arrays by their values. Two modules setting one key to different
 // values is an error naming both. owners maps key paths to the module that
 // set them.
-func mergePlist(dst, src map[string]any, from string, owners map[string]string, prefix string) error {
+func mergePlist(dst, src map[string]any, from string, owners map[string]string, app map[string]bool, prefix string) error {
 	for k, v := range src {
 		key := prefix + k
 		old, ok := dst[k]
@@ -417,10 +431,13 @@ func mergePlist(dst, src map[string]any, from string, owners map[string]string, 
 			owners[key] = from
 			continue
 		}
+		if top, _, _ := strings.Cut(key, "."); app[top] {
+			continue // the app's own value replaces both
+		}
 		switch o := old.(type) {
 		case map[string]any:
 			if s, ok := v.(map[string]any); ok {
-				if err := mergePlist(o, s, from, owners, key+"."); err != nil {
+				if err := mergePlist(o, s, from, owners, app, key+"."); err != nil {
 					return err
 				}
 				continue

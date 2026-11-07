@@ -31,17 +31,17 @@ func GenerateGo(m *Module, minMacOS string) ([]byte, error) {
 		deps = append(deps, fmt.Sprintf("%q", m.Deps[path].Name))
 	}
 	fmt.Fprintf(&b, `
-// _module is the module's description, for package native.
-var _module = &native.Module{Name: %q, Symbol: %q, MinMacOS: %q, Dir: _dir(), Errors: []*native.Error{%s}, Deps: []string{%s}}
+// _module describes the module to the runtime.
+var _module = &_native.Module{Name: %q, Symbol: %q, MinMacOS: %q, Dir: _dir(), Errors: []*_native.Error{%s}, Deps: []string{%s}}
 
 // _dir returns the package's directory when the binary knows it, where
 // mygo generate builds the implementation for go test and go run.
 func _dir() string {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok || !filepath.IsAbs(file) {
+	_, file, _, ok := _runtime.Caller(0)
+	if !ok || !_filepath.IsAbs(file) {
 		return ""
 	}
-	return filepath.Dir(file)
+	return _filepath.Dir(file)
 }
 `, m.Name, m.Package, minMacOS, strings.Join(errs, ", "), strings.Join(deps, ", "))
 	// The values of the platform's interfaces, which other modules wrap
@@ -49,10 +49,10 @@ func _dir() string {
 	var wraps []string
 	for _, it := range m.Interfaces {
 		if !it.ByGo {
-			wraps = append(wraps, fmt.Sprintf("%q: {Flags: %s, Wrap: func(o *native.Object) any { return &%s{o} }},", it.Name, flagsOf(it.MainThread), proxyName(it)))
+			wraps = append(wraps, fmt.Sprintf("%q: {Flags: %s, Wrap: func(o *_native.Object) any { return &%s{o} }},", it.Name, flagsOf(it.MainThread), proxyName(it)))
 		}
 	}
-	fmt.Fprintf(&b, "\nfunc init() {\n\tnative.Register(_module, map[string]native.Wrapper{\n%s\n\t})\n}\n", strings.Join(wraps, "\n"))
+	fmt.Fprintf(&b, "\nfunc init() {\n\t_native.Register(_module, map[string]_native.Wrapper{\n%s\n\t})\n}\n", strings.Join(wraps, "\n"))
 	foreign := map[string]*Type{}
 	for _, it := range m.Interfaces {
 		for _, me := range it.Methods {
@@ -63,7 +63,7 @@ func _dir() string {
 	}
 	for _, name := range slices.Sorted(maps.Keys(foreign)) {
 		t := foreign[name]
-		fmt.Fprintf(&b, "\n// %s wraps an object of the native module %s.\nfunc %s(h uint64) %s {\n\tv, _ := native.Wrap(h, %q, %q).(%s)\n\treturn v\n}\n", name, t.Pkg.Name, name, t.Go, t.Pkg.Name, t.Name, t.Go)
+		fmt.Fprintf(&b, "\n// %s wraps an object of the native module %s.\nfunc %s(h uint64) %s {\n\tv, _ := _native.Wrap(h, %q, %q).(%s)\n\treturn v\n}\n", name, t.Pkg.Name, name, t.Go, t.Pkg.Name, t.Name, t.Go)
 	}
 	for _, it := range m.Interfaces {
 		if it.ByGo {
@@ -84,20 +84,30 @@ func _dir() string {
 			imports = append(imports, fmt.Sprintf("%s %q", qual, path))
 		}
 	}
+	// What the signatures name, under the names the interface uses.
 	for path, used := range map[string]bool{
-		"github.com/egoist/mygo/native": true,
-		"path/filepath":                 true,
-		"runtime":                       true,
-		"context":                       uses("context"),
-		"iter":                          uses("iter"),
-		"fmt":                           uses("fmt"),
-		"io":                            uses("io"),
-		"time":                          uses("time"),
-		mygoPath:                        uses("mygo"),
-		uiPath:                          uses("ui"),
+		nativePath: uses("native"),
+		"context":  uses("context"),
+		"iter":     uses("iter"),
+		"io":       uses("io"),
+		"time":     uses("time"),
+		mygoPath:   uses("mygo"),
+		uiPath:     uses("ui"),
 	} {
 		if used {
 			imports = append(imports, fmt.Sprintf("%q", path))
+		}
+	}
+	// What the generated code calls, under names no parameter takes.
+	for path, alias := range map[string]string{
+		nativePath:      "_native",
+		"runtime":       "_runtime",
+		"path/filepath": "_filepath",
+		"context":       "_context",
+		"fmt":           "_fmt",
+	} {
+		if strings.Contains(out, alias+".") {
+			imports = append(imports, fmt.Sprintf("%s %q", alias, path))
 		}
 	}
 	sort.Slice(imports, func(i, j int) bool { return importKey(imports[i]) < importKey(imports[j]) })
@@ -139,7 +149,7 @@ func importKey(s string) string { return s[strings.Index(s, `"`):] }
 
 func flagsOf(mt bool) string {
 	if mt {
-		return "native.MainThread"
+		return "_native.MainThread"
 	}
 	return "0"
 }
@@ -148,7 +158,7 @@ func flagsOf(mt bool) string {
 func signature(m *Method) string {
 	var ps []string
 	if m.Ctx {
-		ps = append(ps, "ctx context.Context")
+		ps = append(ps, "_ctx context.Context")
 	}
 	for _, p := range m.Params {
 		ps = append(ps, p.Name+" "+p.Type.Go)
@@ -177,8 +187,8 @@ func (g *goGen) proxy(it *Interface) {
 		g.p("\n// New%s makes the implementation of %s on this platform. It returns\n// errors.ErrUnsupported where the module has none, or the system lacks\n// what it needs.\nfunc New%s() (%s, error) {\n", it.Name, it.Name, it.Name, it.Name)
 		g.p("\to, err := _module.New(%q, %s)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\treturn &%s{o}, nil\n}\n", it.Name, flagsOf(it.MainThread), name)
 	}
-	g.p("\n// %s calls the platform's implementation of %s.\ntype %s struct{ o *native.Object }\n", name, it.Name, name)
-	g.p("\n// NativeObject returns the platform's object.\nfunc (x *%s) NativeObject() *native.Object { return x.o }\n", name)
+	g.p("\n// %s calls the platform's implementation of %s.\ntype %s struct{ o *_native.Object }\n", name, it.Name, name)
+	g.p("\n// NativeObject returns the platform's object.\nfunc (x *%s) NativeObject() *_native.Object { return x.o }\n", name)
 	if it.View {
 		g.p("\n// NativeView returns the platform's view, or 0 once closed.\nfunc (x *%s) NativeView() uintptr { return x.o.View() }\n", name)
 	}
@@ -188,29 +198,53 @@ func (g *goGen) proxy(it *Interface) {
 	}
 }
 
+// The generated methods name their own identifiers with a leading
+// underscore, which the parser keeps out of the interface's parameter
+// names, so that none clashes: the receiver _x, the context _ctx, the
+// locals _err, _r, _h, _fN and _gN, and the packages they call, imported
+// as _native, _runtime, _context and _fmt. The signatures keep the
+// interface's own names and packages.
+
+// keptAlive reports whether an argument of type t is a value of Go's that
+// stands for memory or an object of the platform's, which must stay
+// reachable until the platform is done with it.
+func keptAlive(t *Type) bool {
+	switch t.Kind {
+	case Buffer, View:
+		return true
+	case InterfaceType:
+		return !t.Iface.ByGo
+	}
+	return false
+}
+
 // argExprs returns the expressions of a call's arguments, with the
-// statements that prepare them and the handles of its callbacks.
-func (g *goGen) argExprs(m *Method) (pre []string, args []string, funcs []string) {
+// statements that prepare them, the handles of its callbacks and values
+// of Go's, and the arguments to keep alive.
+func (g *goGen) argExprs(m *Method) (pre []string, args []string, funcs []string, keep []string) {
 	for i, p := range m.Params {
+		if keptAlive(p.Type) {
+			keep = append(keep, p.Name)
+		}
 		switch p.Type.Kind {
 		case Func:
 			v := fmt.Sprintf("_f%d", i)
-			pre = append(pre, fmt.Sprintf("var %s uint64\n\tif %s != nil {\n\t\t%s = native.Func(%s, %v)\n\t}", v, p.Name, v, g.funcWrapper(p.Name, p.Type), notifies(p.Type)))
+			pre = append(pre, fmt.Sprintf("var %s uint64\n\tif %s != nil {\n\t\t%s = _native.Func(%s, %v)\n\t}", v, p.Name, v, g.funcWrapper(p.Name, p.Type), notifies(p.Type)))
 			args = append(args, v)
 			funcs = append(funcs, v)
 		case InterfaceType:
 			if p.Type.Iface.ByGo {
 				v := fmt.Sprintf("_g%d", i)
-				pre = append(pre, fmt.Sprintf("var %s uint64\n\tif %s != nil {\n\t\t%s = native.Export(_module, %s, func(ctx context.Context, m int, a native.Args) (any, error) { return _dispatch%s(%s, ctx, m, a) })\n\t}", v, p.Name, v, p.Name, p.Type.Iface.Name, p.Name))
+				pre = append(pre, fmt.Sprintf("var %s uint64\n\tif %s != nil {\n\t\t%s = _native.Export(_module, %s, func(_c _context.Context, _m int, _a _native.Args) (any, error) { return _dispatch%s(%s, _c, _m, _a) })\n\t}", v, p.Name, v, p.Name, p.Type.Iface.Name, p.Name))
 				args = append(args, v)
 				funcs = append(funcs, v)
 			} else {
-				args = append(args, "native.HandleOf("+p.Name+")")
+				args = append(args, "_native.HandleOf("+p.Name+")")
 			}
 		case Window:
-			args = append(args, "native.WindowHandle("+p.Name+")")
+			args = append(args, "_native.WindowHandle("+p.Name+")")
 		case View:
-			args = append(args, "native.HandleOf("+p.Name+")")
+			args = append(args, "_native.HandleOf("+p.Name+")")
 		default:
 			args = append(args, p.Name)
 		}
@@ -224,11 +258,11 @@ func notifies(t *Type) bool { return t.Result == nil && !t.Err }
 // function fn, of type t.
 func (g *goGen) funcWrapper(fn string, t *Type) string {
 	var b strings.Builder
-	b.WriteString("func(a native.Args) (any, error) {\n")
+	b.WriteString("func(_a _native.Args) (any, error) {\n")
 	var call []string
 	for i, p := range t.Params {
-		fmt.Fprintf(&b, "var p%d %s\nif err := a.Decode(%d, &p%d); err != nil {\nreturn nil, err\n}\n", i, p.Type.Go, i, i)
-		call = append(call, fmt.Sprintf("p%d", i))
+		fmt.Fprintf(&b, "var _p%d %s\nif _err := _a.Decode(%d, &_p%d); _err != nil {\nreturn nil, _err\n}\n", i, p.Type.Go, i, i)
+		call = append(call, fmt.Sprintf("_p%d", i))
 	}
 	c := fn + "(" + strings.Join(call, ", ") + ")"
 	switch {
@@ -247,79 +281,88 @@ func (g *goGen) funcWrapper(fn string, t *Type) string {
 
 func (g *goGen) method(it *Interface, m *Method) {
 	name := proxyName(it)
-	g.p("\nfunc (x *%s) %s {\n", name, signature(m))
+	g.p("\nfunc (_x *%s) %s {\n", name, signature(m))
 	sym := it.Name + "_" + m.Name
 	flags := flagsOf(m.MainThread)
 	if m.Close {
-		g.p("\treturn x.NativeObject().Close()\n}\n")
+		g.p("\treturn _x.NativeObject().Close()\n}\n")
 		return
 	}
-	pre, args, funcs := g.argExprs(m)
-	for _, s := range pre {
-		g.p("\t%s\n", s)
-	}
-	for _, p := range m.Params {
-		if p.Type.Kind == Buffer {
-			g.p("\tdefer runtime.KeepAlive(%s)\n", p.Name)
-		}
-	}
+	pre, args, funcs, keep := g.argExprs(m)
 	argList := "nil"
 	if len(args) > 0 {
 		argList = "[]any{" + strings.Join(args, ", ") + "}"
 	}
-	forget := ""
-	if len(funcs) > 0 {
-		forget = "\t\tnative.Forget(" + strings.Join(funcs, ", ") + ")\n"
-	}
-	switch {
-	case m.Stream != 0:
+	if m.Stream != 0 {
+		// The arguments are made as the loop starts the stream, which
+		// holds what it is given until it ends.
+		funcList := "nil"
+		if len(funcs) > 0 {
+			funcList = "[]uint64{" + strings.Join(funcs, ", ") + "}"
+		}
+		prepare := "func() ([]any, []uint64) {\n"
+		for _, s := range pre {
+			prepare += s + "\n"
+		}
+		prepare += "return " + argList + ", " + funcList + "\n}"
 		var expr string
 		if m.Result.Kind == InterfaceType {
-			expr = fmt.Sprintf("native.StreamMap(ctx, x.NativeObject(), %q, %s, %s, %s)", sym, flags, argList, wrapName(m.Result))
+			expr = fmt.Sprintf("_native.StreamMap(_ctx, _x.NativeObject(), %q, %s, %s, %s%s)", sym, flags, prepare, wrapName(m.Result), prefixComma(keep))
 		} else {
-			expr = fmt.Sprintf("native.Stream[%s](ctx, x.NativeObject(), %q, %s, %s)", m.Result.Go, sym, flags, argList)
+			expr = fmt.Sprintf("_native.Stream[%s](_ctx, _x.NativeObject(), %q, %s, %s%s)", m.Result.Go, sym, flags, prepare, prefixComma(keep))
 		}
 		if m.Stream == 1 {
-			expr = "native.Seq(" + expr + ")"
+			expr = "_native.Seq(" + expr + ")"
 		}
 		g.p("\treturn %s\n}\n", expr)
 		return
-	case m.Closer:
-		g.p("\treturn x.NativeObject().Subscribe(%q, %s, %s%s)\n}\n", sym, flags, argList, prefixComma(funcs))
+	}
+	for _, s := range pre {
+		g.p("\t%s\n", s)
+	}
+	for _, k := range keep {
+		g.p("\tdefer _runtime.KeepAlive(%s)\n", k)
+	}
+	forget := ""
+	if len(funcs) > 0 {
+		forget = "\t\t_native.Forget(" + strings.Join(funcs, ", ") + ")\n"
+	}
+	if m.Closer {
+		g.p("\treturn _x.NativeObject().Subscribe(%q, %s, %s%s)\n}\n", sym, flags, argList, prefixComma(funcs))
 		return
 	}
-	callFn := fmt.Sprintf("x.NativeObject().Call(%q, %s, %s, ", sym, flags, argList)
+	callFn := fmt.Sprintf("_x.NativeObject().Call(%q, %s, %s, ", sym, flags, argList)
 	if m.Ctx {
-		callFn = fmt.Sprintf("x.NativeObject().CallContext(ctx, %q, %s, %s, ", sym, flags, argList)
+		callFn = fmt.Sprintf("_x.NativeObject().CallContext(_ctx, %q, %s, %s, ", sym, flags, argList)
 	}
 	switch {
 	case m.Result == nil:
-		g.p("\terr := %snil)\n", callFn)
+		g.p("\t_err := %snil)\n", callFn)
 		if forget != "" {
-			g.p("\tif err != nil {\n%s\t}\n", forget)
+			g.p("\tif _err != nil {\n%s\t}\n", forget)
 		}
 		if m.Err {
-			g.p("\treturn err\n")
+			g.p("\treturn _err\n")
 		} else if forget == "" {
-			g.p("\t_ = err\n")
+			g.p("\t_ = _err\n")
 		}
 	case m.Result.Kind == InterfaceType:
-		g.p("\tvar h uint64\n\terr := %s&h)\n", callFn)
-		g.p("\tif err != nil {\n%s", forget)
+		g.p("\tvar _h uint64\n\t_err := %s&_h)\n", callFn)
+		g.p("\tif _err != nil {\n%s", forget)
 		if m.Err {
-			g.p("\t\treturn nil, err\n\t}\n\treturn %s(h), nil\n", wrapName(m.Result))
+			g.p("\t\treturn nil, _err\n\t}\n\treturn %s(_h), nil\n", wrapName(m.Result))
 		} else {
-			g.p("\t\treturn nil\n\t}\n\treturn %s(h)\n", wrapName(m.Result))
+			g.p("\t\treturn nil\n\t}\n\treturn %s(_h)\n", wrapName(m.Result))
 		}
 	default:
-		g.p("\tvar r %s\n\terr := %s&r)\n", m.Result.Go, callFn)
+		g.p("\tvar _r %s\n\t_err := %s&_r)\n", m.Result.Go, callFn)
 		if forget != "" {
-			g.p("\tif err != nil {\n%s\t}\n", forget)
+			g.p("\tif _err != nil {\n%s\t}\n", forget)
 		}
 		if m.Err {
-			g.p("\treturn r, err\n")
+			g.p("\treturn _r, _err\n")
 		} else {
-			g.p("\t_ = err\n\treturn r\n")
+			g.p("\t_ = _err\n\treturn _r\n")
 		}
 	}
 	g.p("}\n")
@@ -335,18 +378,18 @@ func prefixComma(s []string) string {
 // dispatch writes the function the platform calls the methods of a Go
 // value of an interface Go implements through.
 func (g *goGen) dispatch(it *Interface) {
-	g.p("\n// _dispatch%s calls the method number m of v for the platform.\nfunc _dispatch%s(v %s, ctx context.Context, m int, a native.Args) (any, error) {\n\tswitch m {\n", it.Name, it.Name, it.Name)
+	g.p("\n// _dispatch%s calls the method number _m of _v for the platform.\nfunc _dispatch%s(_v %s, _ctx _context.Context, _m int, _a _native.Args) (any, error) {\n\tswitch _m {\n", it.Name, it.Name, it.Name)
 	for i, m := range it.Methods {
 		g.p("\tcase %d:\n", i)
 		var call []string
 		if m.Ctx {
-			call = append(call, "ctx")
+			call = append(call, "_ctx")
 		}
 		for j, p := range m.Params {
-			g.p("\t\tvar p%d %s\n\t\tif err := a.Decode(%d, &p%d); err != nil {\n\t\t\treturn nil, err\n\t\t}\n", j, p.Type.Go, j, j)
-			call = append(call, fmt.Sprintf("p%d", j))
+			g.p("\t\tvar _p%d %s\n\t\tif _err := _a.Decode(%d, &_p%d); _err != nil {\n\t\t\treturn nil, _err\n\t\t}\n", j, p.Type.Go, j, j)
+			call = append(call, fmt.Sprintf("_p%d", j))
 		}
-		c := "v." + m.Name + "(" + strings.Join(call, ", ") + ")"
+		c := "_v." + m.Name + "(" + strings.Join(call, ", ") + ")"
 		switch {
 		case m.Result != nil && m.Err:
 			g.p("\t\treturn %s\n", c)
@@ -358,5 +401,5 @@ func (g *goGen) dispatch(it *Interface) {
 			g.p("\t\t%s\n\t\treturn nil, nil\n", c)
 		}
 	}
-	g.p("\t}\n\treturn nil, fmt.Errorf(\"native: %s has no method %%d\", m)\n}\n", it.Name)
+	g.p("\t}\n\treturn nil, _fmt.Errorf(\"native: %s has no method %%d\", _m)\n}\n", it.Name)
 }

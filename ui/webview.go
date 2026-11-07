@@ -68,7 +68,12 @@ func coreWebView(c *context, v NativeWebView) *node {
 // paints its background and children, so a view can show something else
 // in the view's place.
 func coreNativeView(c *context, v PlatformView) *node {
-	if v == nil {
+	var h uintptr
+	if v != nil {
+		h = v.NativeView()
+	}
+	if h == 0 {
+		// No implementation, or closed.
 		e := coreBox(c)
 		e.self = Stretch
 		return e
@@ -76,13 +81,14 @@ func coreNativeView(c *context, v PlatformView) *node {
 	rt := c.rt
 	var pv *platformView
 	for _, p := range rt.platformViews {
-		if p.v == v {
+		// One gone may have had the address of a view made since.
+		if p.h == h && !p.gone {
 			pv = p
 			break
 		}
 	}
 	if pv == nil {
-		pv = &platformView{v: v}
+		pv = &platformView{h: h}
 		rt.platformViews = append(rt.platformViews, pv)
 	}
 	return coreWebView(c, pv)
@@ -99,24 +105,28 @@ type PlatformView interface {
 // platformView stands for a view of the platform in the window of an
 // engine, which places it as it places web views: the surface hosts it
 // (viewhost.Embed, which package native sets) the first time a frame
-// shows it.
+// shows it. It holds the view by its handle, not the Go value: a view the
+// app lets go of is released, which tells the window (gone).
 type platformView struct {
-	v     PlatformView
+	h     uintptr
 	embed platform.WebView
 	conn  *surface.Conn
+	gone  bool
 }
 
 // SurfaceWebView puts the view under the surface of conn, the first time,
 // and returns what stands for it there. Main thread only.
 func (p *platformView) SurfaceWebView(conn *surface.Conn) platform.WebView {
+	if p.gone {
+		return nil
+	}
 	if p.embed != nil && p.conn == conn {
 		return p.embed
 	}
-	h := p.v.NativeView()
-	if h == 0 || viewhost.Embed == nil {
+	if viewhost.Embed == nil {
 		return nil
 	}
-	e := viewhost.Embed(conn.Surface, h)
+	e := viewhost.Embed(conn.Surface, p.h, p.leave)
 	if e == nil {
 		return nil
 	}
@@ -127,15 +137,22 @@ func (p *platformView) SurfaceWebView(conn *surface.Conn) platform.WebView {
 	return e
 }
 
-// pruneViews takes the views of the platform that were closed out of the
-// window.
+// leave takes the view out of the window, as it is closed or released.
+// Main thread only.
+func (p *platformView) leave() {
+	p.gone = true
+	if p.embed != nil {
+		p.embed.Close()
+		p.embed = nil
+	}
+}
+
+// pruneViews forgets the views of the platform that are gone.
 func (rt *engine) pruneViews() {
 	kept := rt.platformViews[:0]
 	for _, pv := range rt.platformViews {
-		if pv.v.NativeView() != 0 {
+		if !pv.gone {
 			kept = append(kept, pv)
-		} else if pv.embed != nil {
-			pv.embed.Close()
 		}
 	}
 	clear(rt.platformViews[len(kept):])

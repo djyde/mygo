@@ -437,6 +437,9 @@ func (l *loader) method(it *Interface, name string, fld *ast.Field, ft *ast.Func
 			if n != nil && n.Name != "_" {
 				pname = n.Name
 			}
+			if n != nil && strings.HasPrefix(n.Name, "_") && n.Name != "_" {
+				l.errorf(p, "%s names a parameter %s: the generated code keeps names starting with _ for its own; rename it", where, n.Name)
+			}
 			if isSel(p.Type, f, "context", "Context") {
 				if i != 0 {
 					l.errorf(p, "%s takes a context.Context after other parameters: take it first", where)

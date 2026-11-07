@@ -36,7 +36,7 @@ func GenerateSwift(m *Module) []byte {
 	}
 	g.errorsDecl()
 	g.p("\n// MARK: - What Go calls\n")
-	g.p("\n@_cdecl(%q)\npublic func _mygo_init(_ cb: _MygoCallback) {\n    _mygoCallback = cb\n}\n", g.sym("init"))
+	g.p("\n@_cdecl(%q)\npublic func _mygo_init(_ cb: _MygoCallback, _ idBase: UInt64) {\n    _mygoCallback = cb\n    _mygoIDBase = idBase\n}\n", g.sym("init"))
 	for _, it := range m.Interfaces {
 		if it.ByGo {
 			g.goProxy(it)
@@ -600,7 +600,7 @@ func (g *swiftGen) entry(it *Interface, m *Method) {
 // goProxy writes the class through which the implementation calls a value
 // of an interface Go implements.
 func (g *swiftGen) goProxy(it *Interface) {
-	g.p("\n/// Calls a Go value implementing %s.\nfinal class _Go%s: %s, @unchecked Sendable {\n    let id: UInt64\n    init(_ id: UInt64) {\n        if id == 0 { fatalError(\"%s: Go passed nil for %s\") }\n        self.id = id\n    }\n    deinit { _mygoSend(_mygoKindRelease, id, 0, nil) }\n", it.Name, it.Name, it.Name, g.m.Name, it.Name)
+	g.p("\n/// Calls a Go value implementing %s.\nfinal class _Go%s: %s, @unchecked Sendable {\n    // Named as no parameter of the interface's may be.\n    let _mygoID: UInt64\n    init(_ id: UInt64) {\n        if id == 0 { fatalError(\"%s: Go passed nil for %s\") }\n        _mygoID = id\n    }\n    deinit { _mygoSend(_mygoKindRelease, _mygoID, 0, nil) }\n", it.Name, it.Name, it.Name, g.m.Name, it.Name)
 	for i, m := range it.Methods {
 		var enc []string
 		for _, p := range m.Params {
@@ -614,9 +614,9 @@ func (g *swiftGen) goProxy(it *Interface) {
 		}
 		var call string
 		if m.Ctx {
-			call = fmt.Sprintf("try await _mygoInvokeAsync(id, %d, %s, %s.self)", i, args, res)
+			call = fmt.Sprintf("try await _mygoInvokeAsync(_mygoID, %d, %s, %s.self)", i, args, res)
 		} else {
-			call = fmt.Sprintf("try _mygoInvoke(id, %d, %s, %s.self)", i, args, res)
+			call = fmt.Sprintf("try _mygoInvoke(_mygoID, %d, %s, %s.self)", i, args, res)
 		}
 		var body string
 		switch {

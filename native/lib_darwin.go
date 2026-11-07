@@ -11,12 +11,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
 )
+
+// lastModule numbers the modules as they load.
+var lastModule atomic.Uint64
 
 // library is the loaded implementation of a module.
 type library struct {
@@ -136,7 +140,10 @@ func (m *Module) open() (*library, error) {
 	if err != nil {
 		return nil, err
 	}
-	purego.SyscallN(init, libc.callback)
+	// The module's index makes its continuations' ids unique.
+	idx := lastModule.Add(1)
+	modules.Store(idx, m)
+	purego.SyscallN(init, libc.callback, uintptr(idx<<contBits))
 	return lib, nil
 }
 
