@@ -57,14 +57,23 @@ func (a *app) view(c *ui.Context) {
 					a.sharing.Share(a.win, share.Bounds(), a.text)
 				}
 				if ui.Button(c.Key("paris"), "Paris").Clicked() {
-					a.m.Show(places.Place{Latitude: 48.8566, Longitude: 2.3522}, 0.2)
+					a.visit(places.Place{Latitude: 48.8566, Longitude: 2.3522}, 0.2, "Bienvenue à Paris")
 				}
 				if ui.Button(c.Key("tokyo"), "Tokyo").Clicked() {
-					a.m.Show(places.Place{Latitude: 35.6762, Longitude: 139.6503}, 0.3)
+					a.visit(places.Place{Latitude: 35.6762, Longitude: 139.6503}, 0.3, "東京へようこそ")
 				}
 			})
 		})
 	})
+}
+
+// visit shows a place on the map, pinned with a greeting whose language the
+// language module tells: the places module calls the analyzer itself.
+func (a *app) visit(p places.Place, span float64, greeting string) {
+	a.m.Show(p, span)
+	if a.analyzer != nil {
+		a.m.Pin(p, a.analyzer, greeting)
+	}
 }
 
 func (a *app) text_(c *ui.Context, t *ui.Theme) {

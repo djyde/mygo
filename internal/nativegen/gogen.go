@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"maps"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -21,13 +23,16 @@ func GenerateGo(m *Module, minMacOS string) ([]byte, error) {
 	var b bytes.Buffer
 	g := &goGen{m: m, b: &b}
 	fmt.Fprintf(&b, "%s// %s\n\npackage %s\n\nIMPORTS\n", goHeader, SourceLine(m.Hash), m.Package)
-	var errs []string
+	var errs, deps []string
 	for _, e := range m.Errors {
 		errs = append(errs, e.Name)
 	}
+	for _, path := range slices.Sorted(maps.Keys(m.Deps)) {
+		deps = append(deps, fmt.Sprintf("%q", m.Deps[path].Name))
+	}
 	fmt.Fprintf(&b, `
 // _module is the module's description, for package native.
-var _module = &native.Module{Name: %q, Symbol: %q, MinMacOS: %q, Dir: _dir(), Errors: []*native.Error{%s}}
+var _module = &native.Module{Name: %q, Symbol: %q, MinMacOS: %q, Dir: _dir(), Errors: []*native.Error{%s}, Deps: []string{%s}}
 
 // _dir returns the package's directory when the binary knows it, where
 // mygo generate builds the implementation for go test and go run.
@@ -38,7 +43,28 @@ func _dir() string {
 	}
 	return filepath.Dir(file)
 }
-`, m.Name, m.Package, minMacOS, strings.Join(errs, ", "))
+`, m.Name, m.Package, minMacOS, strings.Join(errs, ", "), strings.Join(deps, ", "))
+	// The values of the platform's interfaces, which other modules wrap
+	// by name.
+	var wraps []string
+	for _, it := range m.Interfaces {
+		if !it.ByGo {
+			wraps = append(wraps, fmt.Sprintf("%q: {Flags: %s, Wrap: func(o *native.Object) any { return &%s{o} }},", it.Name, flagsOf(it.MainThread), proxyName(it)))
+		}
+	}
+	fmt.Fprintf(&b, "\nfunc init() {\n\tnative.Register(_module, map[string]native.Wrapper{\n%s\n\t})\n}\n", strings.Join(wraps, "\n"))
+	foreign := map[string]*Type{}
+	for _, it := range m.Interfaces {
+		for _, me := range it.Methods {
+			if t := me.Result; t != nil && t.Kind == InterfaceType && t.Pkg != nil {
+				foreign[wrapName(t)] = t
+			}
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(foreign)) {
+		t := foreign[name]
+		fmt.Fprintf(&b, "\n// %s wraps an object of the native module %s.\nfunc %s(h uint64) %s {\n\tv, _ := native.Wrap(h, %q, %q).(%s)\n\treturn v\n}\n", name, t.Pkg.Name, name, t.Go, t.Pkg.Name, t.Name, t.Go)
+	}
 	for _, it := range m.Interfaces {
 		if it.ByGo {
 			g.dispatch(it)
@@ -50,6 +76,13 @@ func _dir() string {
 	var imports []string
 	uses := func(pkg string) bool {
 		return regexp.MustCompile(`(^|[^A-Za-z0-9_.])` + pkg + `\.`).MatchString(out)
+	}
+	for path, qual := range m.Quals {
+		if path[strings.LastIndex(path, "/")+1:] == qual {
+			imports = append(imports, fmt.Sprintf("%q", path))
+		} else {
+			imports = append(imports, fmt.Sprintf("%s %q", qual, path))
+		}
 	}
 	for path, used := range map[string]bool{
 		"github.com/egoist/mygo/native": true,
@@ -67,7 +100,7 @@ func _dir() string {
 			imports = append(imports, fmt.Sprintf("%q", path))
 		}
 	}
-	sort.Strings(imports)
+	sort.Slice(imports, func(i, j int) bool { return importKey(imports[i]) < importKey(imports[j]) })
 	var std, other []string
 	for _, imp := range imports {
 		if strings.Contains(imp, ".") {
@@ -92,6 +125,17 @@ type goGen struct {
 func (g *goGen) p(format string, args ...any) { fmt.Fprintf(g.b, format, args...) }
 
 func proxyName(it *Interface) string { return "_" + it.Name }
+
+// wrapName is the function that wraps a handle of an interface type.
+func wrapName(t *Type) string {
+	if t.Pkg != nil {
+		return "_wrap" + t.Pkg.Name + "_" + t.Name
+	}
+	return "_wrap" + t.Name
+}
+
+// importKey sorts an import line by its path.
+func importKey(s string) string { return s[strings.Index(s, `"`):] }
 
 func flagsOf(mt bool) string {
 	if mt {
@@ -233,7 +277,7 @@ func (g *goGen) method(it *Interface, m *Method) {
 	case m.Stream != 0:
 		var expr string
 		if m.Result.Kind == InterfaceType {
-			expr = fmt.Sprintf("native.StreamMap(ctx, x.NativeObject(), %q, %s, %s, _wrap%s)", sym, flags, argList, m.Result.Iface.Name)
+			expr = fmt.Sprintf("native.StreamMap(ctx, x.NativeObject(), %q, %s, %s, %s)", sym, flags, argList, wrapName(m.Result))
 		} else {
 			expr = fmt.Sprintf("native.Stream[%s](ctx, x.NativeObject(), %q, %s, %s)", m.Result.Go, sym, flags, argList)
 		}
@@ -265,9 +309,9 @@ func (g *goGen) method(it *Interface, m *Method) {
 		g.p("\tvar h uint64\n\terr := %s&h)\n", callFn)
 		g.p("\tif err != nil {\n%s", forget)
 		if m.Err {
-			g.p("\t\treturn nil, err\n\t}\n\treturn _wrap%s(h), nil\n", m.Result.Iface.Name)
+			g.p("\t\treturn nil, err\n\t}\n\treturn %s(h), nil\n", wrapName(m.Result))
 		} else {
-			g.p("\t\treturn nil\n\t}\n\treturn _wrap%s(h)\n", m.Result.Iface.Name)
+			g.p("\t\treturn nil\n\t}\n\treturn %s(h)\n", wrapName(m.Result))
 		}
 	default:
 		g.p("\tvar r %s\n\terr := %s&r)\n", m.Result.Go, callFn)

@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -116,5 +117,38 @@ func TestPrebuiltNativeModule(t *testing.T) {
 	write(filepath.Join(src, "Thing.swift"), "func b() {}\n")
 	if h, _ := swiftSourceHash(dir); h == hash {
 		t.Fatal("the hash did not change with the sources")
+	}
+}
+
+func TestNativePackageDependencies(t *testing.T) {
+	var m swiftManifest
+	err := json.Unmarshal([]byte(`{
+		"dependencies": [
+			{"sourceControl": [{"identity": "swift-collections", "location": {"remote": [{"urlString": "https://github.com/apple/swift-collections"}]}, "requirement": {"range": [{"lowerBound": "1.1.0", "upperBound": "2.0.0"}]}}]},
+			{"sourceControl": [{"identity": "swift-algorithms", "location": {"remote": [{"urlString": "https://github.com/apple/swift-algorithms"}]}, "requirement": {"exact": ["1.2.0"]}}]},
+			{"fileSystem": [{"identity": "local", "path": "/src/local"}]}
+		],
+		"targets": [{"name": "X", "dependencies": [{"product": ["Collections", "swift-collections", null, null]}, {"byName": ["Algorithms", null]}],
+			"settings": [{"tool": "linker", "kind": {"linkedFramework": {"_0": "MapKit"}}}]}]
+	}`), &m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decls []string
+	for _, d := range m.Dependencies {
+		_, s := d.decl()
+		decls = append(decls, s)
+	}
+	want := []string{
+		`.package(url: "https://github.com/apple/swift-collections", "1.1.0"..<"2.0.0")`,
+		`.package(url: "https://github.com/apple/swift-algorithms", exact: "1.2.0")`,
+		`.package(path: "/src/local")`,
+	}
+	if strings.Join(decls, "\n") != strings.Join(want, "\n") {
+		t.Errorf("dependencies:\n%s\nwant:\n%s", strings.Join(decls, "\n"), strings.Join(want, "\n"))
+	}
+	x := m.target("X")
+	if got := x.Dependencies[0].decl() + " " + x.Dependencies[1].decl(); got != `.product(name: "Collections", package: "swift-collections") "Algorithms"` {
+		t.Errorf("target dependencies: %s", got)
 	}
 }

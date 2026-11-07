@@ -10,6 +10,7 @@ import (
 	"go/printer"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -77,6 +78,9 @@ type loader struct {
 	decls  []ast.Decl // what the hash covers
 	files  []*ast.File
 
+	loaded  map[string]*Module
+	loading []string
+
 	ifaces  map[string]*Interface
 	structs map[string]*Struct
 	enums   map[string]*Enum
@@ -84,16 +88,31 @@ type loader struct {
 	building map[string]bool
 }
 
-// Load reads the module in dir. Its errors are Errors, one per problem,
-// at the line of the declaration.
+// Load reads the module in dir, and the native modules it uses. Its errors
+// are Errors, one per problem, at the line of the declaration.
 func Load(dir string) (*Module, error) {
+	return load(dir, map[string]*Module{}, nil)
+}
+
+// load reads the module in dir; loaded are the modules read so far, by
+// directory, and loading those being read, which a module that uses
+// itself through others would read again.
+func load(dir string, loaded map[string]*Module, loading []string) (*Module, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
 	}
+	if m, ok := loaded[abs]; ok {
+		return m, nil
+	}
+	if slices.Contains(loading, abs) {
+		return nil, fmt.Errorf("native modules use each other in a cycle: %s", strings.Join(append(loading, abs), " → "))
+	}
 	l := &loader{
+		loaded:  loaded,
+		loading: append(loading, abs),
 		fset:     token.NewFileSet(),
-		m:        &Module{Dir: abs, Imports: map[string]bool{}},
+		m:        &Module{Dir: abs, Imports: map[string]bool{}, Deps: map[string]*Module{}, Quals: map[string]string{}},
 		types:    map[string]*ast.TypeSpec{},
 		docs:     map[string]*ast.CommentGroup{},
 		direct:   map[string][]string{},
@@ -188,6 +207,7 @@ func Load(dir string) (*Module, error) {
 		return nil, l.diags
 	}
 	l.m.Hash = l.hash()
+	l.loaded[abs] = l.m
 	return l.m, nil
 }
 
@@ -672,7 +692,9 @@ func (l *loader) typeOf(e ast.Expr, f *ast.File, where string, param bool) *Type
 			l.errorf(x, "%s uses mygo.Window: take a *mygo.Window", where)
 			return nil
 		}
-		l.errorf(x, "%s uses %s, a type of another package, which crosses to no implementation: give it a struct of the package", where, exprString(x))
+		if t := l.foreignType(x, f, where); t != nil {
+			return t
+		}
 		return nil
 	case *ast.FuncType:
 		if !param {
@@ -1011,4 +1033,67 @@ func (l *loader) checkByGo(it *Interface) {
 			}
 		}
 	}
+}
+
+// foreignType reads a type of another package, which must be a native
+// module: one of its structs, enums, or interfaces the platform implements.
+func (l *loader) foreignType(x *ast.SelectorExpr, f *ast.File, where string) *Type {
+	id, _ := x.X.(*ast.Ident)
+	if id == nil {
+		l.errorf(x, "%s uses %s, which crosses to no implementation", where, exprString(x))
+		return nil
+	}
+	path := importPath(f, id.Name)
+	other := func() {
+		l.errorf(x, "%s uses %s, a type of another package, which crosses to no implementation: give it a struct of the package, or use a native module's", where, exprString(x))
+	}
+	if path == "" || !strings.Contains(strings.Split(path, "/")[0], ".") {
+		other() // the standard library's
+		return nil
+	}
+	dir, err := packageDir(l.m.Dir, path)
+	if err != nil || !IsModule(dir) {
+		other()
+		return nil
+	}
+	dep, err := load(dir, l.loaded, l.loading)
+	if err != nil {
+		l.errorf(x, "%s uses %s, of the native module %s, which has problems: %v", where, exprString(x), path, err)
+		return nil
+	}
+	name := x.Sel.Name
+	t := &Type{Go: exprString(x), Name: name, Pkg: dep}
+	switch {
+	case slices.ContainsFunc(dep.Structs, func(s *Struct) bool { return s.Name == name }):
+		t.Kind = StructType
+	case slices.ContainsFunc(dep.Enums, func(e *Enum) bool { return e.Name == name }):
+		t.Kind = EnumType
+		t.Enum = dep.Enums[slices.IndexFunc(dep.Enums, func(e *Enum) bool { return e.Name == name })]
+	default:
+		i := slices.IndexFunc(dep.Interfaces, func(it *Interface) bool { return it.Name == name })
+		if i < 0 {
+			l.errorf(x, "%s uses %s, which the native module %s does not give its implementation: use its interfaces, structs and enums", where, exprString(x), path)
+			return nil
+		}
+		if dep.Interfaces[i].ByGo {
+			l.errorf(x, "%s uses %s, which Go implements for %s: declare such an interface in the module that takes it", where, exprString(x), path)
+			return nil
+		}
+		t.Kind, t.Iface = InterfaceType, dep.Interfaces[i]
+	}
+	l.m.Deps[path] = dep
+	l.m.Quals[path] = id.Name
+	return t
+}
+
+// packageDir returns the directory of the package path, as the Go module
+// of from sees it.
+func packageDir(from, path string) (string, error) {
+	cmd := exec.Command("go", "list", "-find", "-f", "{{.Dir}}", path)
+	cmd.Dir = from
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }

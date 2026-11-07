@@ -8,7 +8,7 @@ const swiftSupport = `
 // MARK: - Types for the implementation
 
 /// Errors an implementation throws that are not the module's own.
-enum NativeError: Error, Sendable {
+public enum NativeError: Error, Sendable {
     /// Reaches Go as errors.ErrUnsupported: the system lacks what the
     /// implementation needs, such as a framework of a newer version.
     case unsupported
@@ -19,18 +19,18 @@ enum NativeError: Error, Sendable {
 }
 
 /// What stops what a method started, as Go's io.Closer.
-protocol Closer: AnyObject {
+public protocol Closer: AnyObject {
     func close() throws
 }
 
 /// A Closer that runs a closure, once.
-final class NativeCloser: Closer, @unchecked Sendable {
+public final class NativeCloser: Closer, @unchecked Sendable {
     private let lock = NSLock()
     private var fn: (() -> Void)?
 
-    init(_ fn: @escaping () -> Void) { self.fn = fn }
+    public init(_ fn: @escaping () -> Void) { self.fn = fn }
 
-    func close() {
+    public func close() {
         lock.lock()
         let f = fn
         fn = nil
@@ -40,23 +40,23 @@ final class NativeCloser: Closer, @unchecked Sendable {
 }
 
 /// Memory that Go and the implementation both use: a *native.Buffer.
-final class NativeBuffer: Codable, @unchecked Sendable {
+public final class NativeBuffer: Codable, @unchecked Sendable {
     /// The buffer's memory, valid as long as the buffer.
-    let bytes: UnsafeMutableRawBufferPointer
+    public let bytes: UnsafeMutableRawBufferPointer
     private let owned: Bool
     /// The pool the buffer goes back to once Go is done with it.
     fileprivate weak var pool: NativeBufferPool?
 
     /// Makes a buffer of count bytes, which the implementation may yield
     /// from a stream: Go reads it until its loop asks for the next value.
-    init(count: Int) {
+    public init(count: Int) {
         bytes = .allocate(byteCount: Swift.max(count, 1), alignment: 16)
         owned = true
     }
 
-    var count: Int { bytes.count }
+    public var count: Int { bytes.count }
 
-    init(from decoder: any Decoder) throws {
+    public init(from decoder: any Decoder) throws {
         var c = try decoder.unkeyedContainer()
         let p = try c.decode(UInt64.self)
         let n = try c.decode(Int.self)
@@ -64,7 +64,7 @@ final class NativeBuffer: Codable, @unchecked Sendable {
         owned = false
     }
 
-    func encode(to encoder: any Encoder) throws {
+    public func encode(to encoder: any Encoder) throws {
         var c = encoder.unkeyedContainer()
         try c.encode(UInt64(UInt(bitPattern: bytes.baseAddress)))
         try c.encode(bytes.count)
@@ -81,16 +81,16 @@ final class NativeBuffer: Codable, @unchecked Sendable {
 /// Buffers of one size that a stream yields, each reused once Go's loop
 /// moves on from it, so that a stream of buffers allocates none once it
 /// runs: get one, fill it, yield it.
-final class NativeBufferPool: @unchecked Sendable {
+public final class NativeBufferPool: @unchecked Sendable {
     /// The size of the pool's buffers.
-    let size: Int
+    public let size: Int
     private let lock = NSLock()
     private var free: [NativeBuffer] = []
 
-    init(size: Int) { self.size = size }
+    public init(size: Int) { self.size = size }
 
     /// Returns a buffer Go is done with, or a new one.
-    func get() -> NativeBuffer {
+    public func get() -> NativeBuffer {
         lock.lock()
         defer { lock.unlock() }
         if let b = free.popLast() { return b }

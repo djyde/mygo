@@ -16,7 +16,7 @@ import (
 )
 
 // _module is the module's description, for package native.
-var _module = &native.Module{Name: "Language", Symbol: "language", MinMacOS: "13", Dir: _dir(), Errors: []*native.Error{ErrUndetermined, ErrNoEmbedding}}
+var _module = &native.Module{Name: "Language", Symbol: "language", MinMacOS: "13", Dir: _dir(), Errors: []*native.Error{ErrUndetermined, ErrNoEmbedding}, Deps: []string{}}
 
 // _dir returns the package's directory when the binary knows it, where
 // mygo generate builds the implementation for go test and go run.
@@ -26,6 +26,13 @@ func _dir() string {
 		return ""
 	}
 	return filepath.Dir(file)
+}
+
+func init() {
+	native.Register(_module, map[string]native.Wrapper{
+		"Analyzer":  {Flags: 0, Wrap: func(o *native.Object) any { return &_Analyzer{o} }},
+		"Embedding": {Flags: 0, Wrap: func(o *native.Object) any { return &_Embedding{o} }},
+	})
 }
 
 // NewAnalyzer makes the implementation of Analyzer on this platform. It returns

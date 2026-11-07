@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/examples/native-module/modules/language"
 	"github.com/egoist/mygo/native"
 	"github.com/egoist/mygo/ui"
 )
@@ -20,6 +21,10 @@ type Map interface {
 	Show(p Place, span float64)
 	// Center returns the place at the center of the map.
 	Center() Place
+	// Pin puts a pin at p, titled with text and its language, which a of
+	// the native module language tells: the platform calls that module's
+	// object itself.
+	Pin(p Place, a language.Analyzer, text string)
 	// OnMove calls f with the center of the map once the user moved it,
 	// until the subscription is closed.
 	OnMove(f func(center Place)) io.Closer

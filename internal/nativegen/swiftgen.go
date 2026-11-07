@@ -3,6 +3,8 @@ package nativegen
 import (
 	"bytes"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -19,6 +21,9 @@ func GenerateSwift(m *Module) []byte {
 	g := &swiftGen{m: m, b: &b}
 	g.p("%s// %s\n//\n// The declarations of package %s, which the implementation conforms to,\n// and the functions Go calls. See docs/native-modules.md.\n\n", swiftHeader, SourceLine(m.Hash), m.Package)
 	g.p("import Foundation\n#if canImport(AppKit)\nimport AppKit\n#endif\n")
+	for _, path := range slices.Sorted(maps.Keys(m.Deps)) {
+		g.p("import %s\n", m.Deps[path].Name)
+	}
 	g.p("\n// MARK: - Declarations\n")
 	for _, it := range m.Interfaces {
 		g.protocol(it)
@@ -152,9 +157,9 @@ func swiftType(t *Type) string {
 	case Pointer:
 		return swiftType(t.Elem) + "?"
 	case StructType, EnumType:
-		return t.Name
+		return qualified(t)
 	case InterfaceType:
-		return "any " + t.Name
+		return "any " + qualified(t)
 	case Window:
 		return "NSWindow"
 	case View:
@@ -178,6 +183,15 @@ func swiftType(t *Type) string {
 		return s + " -> Void"
 	}
 	return "Never"
+}
+
+// qualified is the Swift name of a type of the module, or of another
+// native module's, after its Swift module.
+func qualified(t *Type) string {
+	if t.Pkg != nil {
+		return t.Pkg.Name + "." + t.Name
+	}
+	return t.Name
 }
 
 // wireType is the Swift type a value crosses as, in JSON.
@@ -309,7 +323,7 @@ func (g *swiftGen) protocol(it *Interface) {
 	if it.MainThread {
 		attr = "@MainActor "
 	}
-	g.p("%sprotocol %s: %s {\n", attr, it.Name, inherits)
+	g.p("%spublic protocol %s: %s {\n", attr, it.Name, inherits)
 	for _, m := range it.Methods {
 		if m.Close {
 			continue
@@ -338,7 +352,7 @@ func (g *swiftGen) structDecl(s *Struct) {
 	if h {
 		conf = "Sendable, Hashable, Codable"
 	}
-	g.p("\n%sstruct %s: %s {\n", docComment(s.Doc, ""), s.Name, conf)
+	g.p("\n%spublic struct %s: %s {\n", docComment(s.Doc, ""), s.Name, conf)
 	var params, assigns []string
 	for _, f := range s.Fields {
 		name := swiftIdent(lowerCamel(f.Name))
@@ -346,7 +360,7 @@ func (g *swiftGen) structDecl(s *Struct) {
 		if f.Type.Kind == Pointer {
 			def = "nil"
 		}
-		g.p("%s    var %s: %s\n", docComment(f.Doc, "    "), name, swiftType(f.Type))
+		g.p("%s    public var %s: %s\n", docComment(f.Doc, "    "), name, swiftType(f.Type))
 		p := name + ": " + swiftType(f.Type)
 		if def != "" {
 			p += " = " + def
@@ -354,12 +368,12 @@ func (g *swiftGen) structDecl(s *Struct) {
 		params = append(params, p)
 		assigns = append(assigns, "        self."+name+" = "+name)
 	}
-	g.p("\n    init(%s) {\n%s\n    }\n", strings.Join(params, ", "), strings.Join(assigns, "\n"))
+	g.p("\n    public init(%s) {\n%s\n    }\n", strings.Join(params, ", "), strings.Join(assigns, "\n"))
 	g.p("\n    enum CodingKeys: String, CodingKey {\n")
 	for _, f := range s.Fields {
 		g.p("        case %s = %q\n", swiftIdent(lowerCamel(f.Name)), f.JSON)
 	}
-	g.p("    }\n\n    init(from decoder: any Decoder) throws {\n        let c = try decoder.container(keyedBy: CodingKeys.self)\n")
+	g.p("    }\n\n    public init(from decoder: any Decoder) throws {\n        let c = try decoder.container(keyedBy: CodingKeys.self)\n")
 	for _, f := range s.Fields {
 		name := swiftIdent(lowerCamel(f.Name))
 		key := "." + strings.Trim(name, "`")
@@ -373,7 +387,7 @@ func (g *swiftGen) structDecl(s *Struct) {
 			g.p("        self.%s = %s\n", name, fromWire(fmt.Sprintf("try c.decode(%s.self, forKey: %s)", wireType(f.Type), key), f.Type))
 		}
 	}
-	g.p("    }\n\n    func encode(to encoder: any Encoder) throws {\n        var c = encoder.container(keyedBy: CodingKeys.self)\n")
+	g.p("    }\n\n    public func encode(to encoder: any Encoder) throws {\n        var c = encoder.container(keyedBy: CodingKeys.self)\n")
 	for _, f := range s.Fields {
 		name := swiftIdent(lowerCamel(f.Name))
 		g.p("        try c.encode(%s, forKey: .%s)\n", toWire("self."+name, f.Type), strings.Trim(name, "`"))
@@ -386,7 +400,7 @@ func (g *swiftGen) enumDecl(e *Enum) {
 	if !e.String {
 		raw = swiftType(basics[e.Basic])
 	}
-	g.p("\n%senum %s: %s, Sendable, Hashable, Codable, CaseIterable {\n", docComment(e.Doc, ""), e.Name, raw)
+	g.p("\n%spublic enum %s: %s, Sendable, Hashable, Codable, CaseIterable {\n", docComment(e.Doc, ""), e.Name, raw)
 	for _, c := range e.Cases {
 		g.p("%s    case %s = %s\n", docComment(c.Doc, "    "), swiftIdent(lowerCamel(c.Name)), c.Value)
 	}
@@ -395,10 +409,10 @@ func (g *swiftGen) enumDecl(e *Enum) {
 
 func (g *swiftGen) errorsDecl() {
 	if len(g.m.Errors) == 0 {
-		g.p("\n/// The errors package %s declares, with native.NewError: none.\nstruct %sError: Error, Sendable, RawRepresentable {\n    let rawValue: String\n    init?(rawValue: String) { return nil }\n}\n", g.m.Package, g.m.Name)
+		g.p("\n/// The errors package %s declares, with native.NewError: none.\npublic struct %sError: Error, Sendable, RawRepresentable {\n    public let rawValue: String\n    public init?(rawValue: String) { return nil }\n}\n", g.m.Package, g.m.Name)
 		return
 	}
-	g.p("\n/// The errors package %s declares, with native.NewError. Go compares\n/// them with errors.Is.\nenum %sError: String, Error, Sendable, CaseIterable {\n", g.m.Package, g.m.Name)
+	g.p("\n/// The errors package %s declares, with native.NewError. Go compares\n/// them with errors.Is.\npublic enum %sError: String, Error, Sendable, CaseIterable {\n", g.m.Package, g.m.Name)
 	for _, e := range g.m.Errors {
 		g.p("%s    case %s = %q\n", docComment(e.Doc, "    "), e.SwiftName(), e.Code)
 	}
@@ -467,7 +481,7 @@ func (g *swiftGen) argValue(m *Method, p *Param) string {
 		if p.Type.Iface.ByGo {
 			return fmt.Sprintf("_Go%s(%s)", p.Type.Iface.Name, a)
 		}
-		return fmt.Sprintf("(_mygoObject(%s) as any %s)", a, p.Type.Iface.Name)
+		return fmt.Sprintf("(_mygoObject(%s) as any %s)", a, qualified(p.Type))
 	case Window:
 		return fmt.Sprintf("_mygoWindow(%s)", a)
 	case View:

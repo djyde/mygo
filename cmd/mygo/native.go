@@ -13,9 +13,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/egoist/mygo/internal/nativegen"
 )
@@ -40,6 +42,9 @@ type nativeBuild struct {
 	// frameworks are the dynamic frameworks and libraries its Swift
 	// package brings, which go next to it.
 	frameworks []string
+	// key identifies what it was built from: its sources and those of the
+	// modules it uses.
+	key string
 }
 
 // appNativeModules returns the directories of the native modules among the
@@ -76,11 +81,21 @@ const (
 // prepareNative generates the app's native modules (for development) or
 // checks that their generated files are up to date (for release), and on
 // macOS builds the implementations for goos/goarch into c.native.
-func prepareNative(c *Config, goos, goarch string, mode nativeMode) error {
+func prepareNative(c *Config, goos, goarch string, mode nativeMode) (err error) {
 	c.native = nil
 	dirs, err := appNativeModules(c, goos, goarch)
 	if err != nil || len(dirs) == 0 {
 		return err
+	}
+	if mode == nativeDev && runtime.GOOS == "darwin" && goos == "darwin" {
+		defer func() {
+			// For editors only: a failure leaves the app's build alone.
+			if err == nil {
+				if werr := writeNativePackage(c, dirs); werr != nil {
+					warnf("Writing .mygo/native/Package.swift: %v", werr)
+				}
+			}
+		}()
 	}
 	app := &nativeApp{}
 	for _, dir := range dirs {
@@ -200,10 +215,42 @@ func swiftArchs(goarch string) []string {
 // buildSwiftModule builds the Swift package of the module in dir, for
 // goarch, and copies a debug build of the host's architecture to where
 // the module's generated Go finds it under go run and go test.
+//
+// The native modules it uses build first: it imports their Swift modules
+// and links their libraries, which it finds next to it in the app, and
+// loaded already under go test.
 func buildSwiftModule(dir, goarch string, release bool) (nativeBuild, error) {
 	m, err := nativegen.Load(dir)
 	if err != nil {
 		return nativeBuild{}, err
+	}
+	hash, err := swiftSourceHash(dir)
+	if err != nil {
+		return nativeBuild{}, err
+	}
+	key := fmt.Sprint(m.Dir, goarch, release, hash)
+	var depFlags []string
+	for _, path := range slices.Sorted(maps.Keys(m.Deps)) {
+		dep := m.Deps[path]
+		if !release {
+			// Release builds refuse stale files; others regenerate them.
+			if _, err := nativegen.Generate(dep.Dir); err != nil {
+				return nativeBuild{}, err
+			}
+		}
+		d, err := buildSwiftModule(dep.Dir, goarch, release)
+		if err != nil {
+			return nativeBuild{}, err
+		}
+		bin := filepath.Dir(d.dylib)
+		depFlags = append(depFlags, "-Xswiftc", "-I", "-Xswiftc", bin, "-Xlinker", "-L", "-Xlinker", bin, "-Xlinker", "-l"+dep.Name)
+		key += " " + d.key // it changes with them
+	}
+	builtMu.Lock()
+	b, ok := built[key]
+	builtMu.Unlock()
+	if ok {
+		return b, nil
 	}
 	if runtime.GOOS != "darwin" {
 		return nativeBuild{}, fmt.Errorf("native module %s is implemented in Swift, which builds on macOS, with Xcode or its Command Line Tools", m.Package)
@@ -216,6 +263,7 @@ func buildSwiftModule(dir, goarch string, release bool) (nativeBuild, error) {
 		config = "release"
 	}
 	args := append([]string{"build", "--package-path", filepath.Join(dir, "apple"), "-c", config, "--product", m.Name}, swiftArchs(goarch)...)
+	args = append(args, depFlags...)
 	t := con.start("Building native module " + m.Package)
 	var out bytes.Buffer
 	cmd := exec.Command("swift", args...)
@@ -228,7 +276,7 @@ func buildSwiftModule(dir, goarch string, release bool) (nativeBuild, error) {
 		return nativeBuild{}, t.end(fmt.Errorf("swift build --show-bin-path: %v", err), "")
 	}
 	binDir := strings.TrimSpace(string(bin))
-	b := nativeBuild{name: m.Name, dir: dir, dylib: filepath.Join(binDir, "lib"+m.Name+".dylib")}
+	b = nativeBuild{name: m.Name, dir: dir, dylib: filepath.Join(binDir, "lib"+m.Name+".dylib"), key: key}
 	if _, err := os.Stat(b.dylib); err != nil {
 		return nativeBuild{}, t.end(fmt.Errorf("native module %s: swift build made no %s: keep the product %s a dynamic library in Package.swift", m.Package, filepath.Base(b.dylib), m.Name), "")
 	}
@@ -249,8 +297,18 @@ func buildSwiftModule(dir, goarch string, release bool) (nativeBuild, error) {
 			}
 		}
 	}
+	builtMu.Lock()
+	built[key] = b
+	builtMu.Unlock()
 	return b, t.end(nil, "Built native module "+m.Package)
 }
+
+// built are the modules built by this run of the CLI, by their
+// directories, targets and sources.
+var (
+	builtMu sync.Mutex
+	built   = map[string]nativeBuild{}
+)
 
 // swiftProblems keeps the lines of the compiler's errors, with what
 // follows each, out of swift build's output.

@@ -112,6 +112,17 @@ func (m *Module) open() (*library, error) {
 	if err := loadLibc(); err != nil {
 		return nil, err
 	}
+	// The modules it uses first, whose libraries it links to: dyld then
+	// finds them loaded, by their install names, wherever they are.
+	for _, name := range m.Deps {
+		dep := registered(name)
+		if dep == nil {
+			return nil, fmt.Errorf("native: %s uses the native module %s, which the program does not link", m.Name, name)
+		}
+		if _, err := dep.load(); err != nil {
+			return nil, err
+		}
+	}
 	path, err := m.find()
 	if err != nil {
 		return nil, err

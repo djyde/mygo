@@ -1,4 +1,5 @@
 import AppKit
+import Language
 import MapKit
 
 // The implementation of package places on macOS: a map of MapKit, and the
@@ -23,6 +24,13 @@ import MapKit
 
     func center() -> Place {
         Place(latitude: centerCoordinate.latitude, longitude: centerCoordinate.longitude)
+    }
+
+    func pin(p: Place, a: any Language.Analyzer, text: String) {
+        let pin = MKPointAnnotation()
+        pin.coordinate = CLLocationCoordinate2D(latitude: p.latitude, longitude: p.longitude)
+        pin.title = "\((try? a.detectLanguage(text: text)) ?? "?"): \(text)"
+        addAnnotation(pin)
     }
 
     func onMove(f: @escaping @Sendable (Place) -> Void) -> any Closer {

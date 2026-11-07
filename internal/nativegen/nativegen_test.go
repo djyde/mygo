@@ -40,10 +40,37 @@ func TestLoadExample(t *testing.T) {
 	}
 }
 
+func TestModuleUsingAnother(t *testing.T) {
+	m, err := Load("../../examples/native-module/modules/places")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep := m.Deps["github.com/egoist/mygo/examples/native-module/modules/language"]
+	if dep == nil || dep.Name != "Language" {
+		t.Fatalf("deps %v", m.Deps)
+	}
+	swift := string(GenerateSwift(m))
+	for _, want := range []string{"import Language\n", "a: any Language.Analyzer", "public protocol Map: NSView"} {
+		if !strings.Contains(swift, want) {
+			t.Errorf("the Swift lacks %q", want)
+		}
+	}
+	src, err := GenerateGo(m, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), `Deps: []string{"Language"}`) {
+		t.Errorf("the Go does not load Language first:\n%s", src)
+	}
+}
+
 // TestExampleUpToDate checks that the example's generated files are those
 // the generator writes now.
 func TestExampleUpToDate(t *testing.T) {
 	stale, err := Stale(example)
+	if more, err := Stale("../../examples/native-module/modules/places"); err == nil {
+		stale = append(stale, more...)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

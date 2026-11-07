@@ -98,10 +98,59 @@ type Module struct {
 	MinMacOS string
 	// Errors are the errors the module declares.
 	Errors []*Error
+	// Deps are the Swift modules of the native modules whose types it
+	// uses, which load before it.
+	Deps []string
 
 	once sync.Once
 	lib  *library
 	err  error
+}
+
+// Wrapper makes the value of an interface of the platform's around an
+// object, for other modules returning it.
+type Wrapper struct {
+	Flags Flags
+	Wrap  func(*Object) any
+}
+
+var registry struct {
+	sync.Mutex
+	modules map[string]*Module
+	wraps   map[string]map[string]Wrapper
+}
+
+// Register records a module and how to wrap the values of its interfaces,
+// for the modules that use them. Generated code calls it as the package
+// initializes.
+func Register(m *Module, wraps map[string]Wrapper) {
+	registry.Lock()
+	defer registry.Unlock()
+	if registry.modules == nil {
+		registry.modules = map[string]*Module{}
+		registry.wraps = map[string]map[string]Wrapper{}
+	}
+	registry.modules[m.Name] = m
+	registry.wraps[m.Name] = wraps
+}
+
+// Wrap returns the value of the interface iface of the module named module
+// around the handle h, which another module returned, or nil.
+func Wrap(h uint64, module, iface string) any {
+	registry.Lock()
+	m, w := registry.modules[module], registry.wraps[module][iface]
+	registry.Unlock()
+	if h == 0 || m == nil || w.Wrap == nil {
+		return nil
+	}
+	return w.Wrap(m.object(h, w.Flags))
+}
+
+// registered returns the module named name, as Register recorded it.
+func registered(name string) *Module {
+	registry.Lock()
+	defer registry.Unlock()
+	return registry.modules[name]
 }
 
 // Flags say how a method is called.

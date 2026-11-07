@@ -32,6 +32,11 @@ type Module struct {
 
 	// Imports are the packages the generated Go imports, besides native.
 	Imports map[string]bool
+	// Deps are the other native modules whose types the module uses, by
+	// the paths it imports them at, and Quals the names it imports them
+	// under.
+	Deps  map[string]*Module
+	Quals map[string]string
 }
 
 // Interface is an interface of the module.
@@ -116,6 +121,9 @@ type Type struct {
 	Name     string     // StructType, EnumType, InterfaceType
 	Iface    *Interface // InterfaceType
 	Enum     *Enum      // EnumType
+	// Pkg is the other native module a StructType, EnumType or
+	// InterfaceType is of, nil for the module's own.
+	Pkg *Module
 	// Func's parameters and results.
 	Params []*Param
 	Result *Type
