@@ -255,6 +255,10 @@ Builds the module's implementations, uploads them as release assets of the
 app's repository and records them in the module's `mygo-plugin.json`, so
 machines without the platforms' tools build the app with them.
 
+<!-- repository-only:start -->
+> Not implemented yet: it says so and exits with status 1.
+<!-- repository-only:end -->
+
 `mygo generate` generates every native module of the app, and `mygo dev`
 and `mygo build` build them; see
 [build, run and test](native-modules.md#build-run-and-test).

@@ -101,6 +101,7 @@ framework safely. Read it before changing anything under `internal/`.
 │   ├── shaderir/       its IR; glsl/, hlsl/ and msl/ write it for the GPU renderers, interp/ runs it on the CPU
 │   ├── svg/            SVG parsing and drawing, for icons and images
 │   ├── tsgen/          TypeScript client generator
+│   ├── nativegen/      native modules: reads their Go interfaces, writes their Go and Swift
 │   ├── i18ngen/        checks catalogs of messages, writes their Go and TypeScript functions
 │   ├── i18nlink/       what package i18n gives MyGo's own catalog only: a catalog that links no dates
 │   ├── l10n/           MyGo's own strings: the catalog of the controls and menu roles
@@ -138,6 +139,7 @@ framework safely. Read it before changing anything under `internal/`.
 │                       i18n/internal/gen), ICU MessageFormat, catalogs
 ├── transfer/           immutable data items, representations, lazy providers and drag effects
 ├── netproxy/           the proxy of the system's settings, for Go's HTTP clients
+├── native/             the runtime of native modules: Go interfaces implemented in Swift
 ├── audio/              sound: players, the mixer, the output of each platform, WAV;
 │                       audio/vorbis and audio/mp3 decode Ogg Vorbis and MP3
 ├── cmd/mygo/           the CLI: init, generate, dev, build, doctor
@@ -150,7 +152,8 @@ framework safely. Read it before changing anything under `internal/`.
 │                       wind, two shaders of ui/shader); loading (the
 │                       loading plugin's indicators); video (a GIF
 │                       looping behind a window's content); permissionflow
-│                       (the permissions, asked for and guided to)
+│                       (the permissions, asked for and guided to);
+│                       native-module (a native module, in Swift, called from native UI)
 ├── docs/               the user guides, the official plugins' pages
 │                       (plugins/), and this architecture guide
 └── website/            the website, with these docs: TanStack Start, prerendered
@@ -5174,6 +5177,61 @@ gets a test with `Tester`. A new GPU renderer draws the instances of
 `Atlas.Changes`, is created in `ui/gpu_<os>.go` behind `gpuRenderer`, and
 has a test that compares its drawing of `gputest.Scene` with the CPU
 renderer's (`gputest.Compare`).
+
+## Native modules (`native`, `internal/nativegen`)
+
+A native module ([the guide](native-modules.md)) is a Go package whose
+interfaces Swift implements. Three parts make it work:
+
+- **`internal/nativegen`** reads the package with `go/ast` alone (no type
+  checking, so it is fast and needs no dependency built): the interfaces
+  marked `//mygo:native` and everything they reach, structs, enums (a
+  named string or integer type and its constants, read from literals and
+  simple `iota` expressions) and the errors made with `native.NewError`.
+  What crosses is a closed set of types (`Type.Kind`); anything else is a
+  `Diag` at its line, with what to write instead. An interface the module
+  returns is the platform's, one it only takes is Go's (`ByGo`). It writes
+  `<package>_native.go` (constructors and proxies, `gogen.go`) and
+  `<Module>.mygo.swift` (protocols, structs with explicit `Codable`, enums,
+  `<Module>Error`, the `@_cdecl` entry points and the glue in
+  `support.go`). Both carry `mygo:native <version> <hash>`, the hash of the
+  package's type, const and error declarations with their comments, which
+  `mygo build` compares (`Stale`). The scaffolds of `mygo native new` and
+  `add` are in `write.go`.
+- **`native`** is the runtime the generated Go calls, imported only by
+  modules, so apps without one link none of it. On macOS it `dlopen`s
+  `lib<Module>.dylib`: from the bundle's `Contents/Frameworks`, then
+  `MYGO_NATIVE_PATH`, then `<package dir>/apple/.build/mygo`, which
+  `runtime.Caller` of the generated file finds in builds without
+  `-trimpath` (go test, go run), checked against the Swift sources' times.
+  Every entry point has one C signature, `(obj, args, len, call) ->
+  block`: arguments go as a JSON array, results come back in a block
+  `malloc`ed by the side that made it (status, length, bytes) and freed by
+  the other. One purego callback, created once for all modules, carries
+  everything the platform tells Go (`kind*` in `call.go`): results of
+  asynchronous calls and values of streams, by call id; notifications and
+  questions of callbacks, by the handle of a Go function; calls of methods
+  of Go values, at once, or on a goroutine answered through
+  `mygo_<m>_resume`; and releases. A stream is pulled: Go calls
+  `mygo_<m>_next` for each value, so a lent `NativeBuffer` stays valid
+  until the loop continues, and canceling the call cancels the Swift task.
+  Objects are `Unmanaged` retains on the Swift side, released by `Close`
+  or a `runtime.AddCleanup`. Notifications run in order on one goroutine,
+  through `mygo.RunOnMain` once the app runs. Main-thread methods run
+  through `RunOnMain`, or directly on the main goroutine before `App.Run`,
+  and in Swift under `MainActor.assumeIsolated`.
+- **The CLI** (`cmd/mygo/native.go`) finds the app's modules among
+  `go list -deps` (a package with a generated `_native.go`), regenerates
+  them in `generate` and `dev` or refuses stale ones in `build`, runs
+  `swift build` (debug for the host, or release for the target's
+  architectures, both at once for universal), copies the dylib and the
+  frameworks its package brings into `Contents/Frameworks`, which
+  `codesign --deep` signs, and merges the modules' `Info.plist` and
+  `Entitlements.plist` (`mergePlist`) under the app's own keys. `mygo dev`
+  watches `apple/Package.swift`, the plists and `apple/Sources`, but not
+  the generated files. `mygo native call` writes a small typed program
+  into the module's directory that decodes the arguments into the
+  method's parameters, and runs it.
 
 ## CLI (`cmd/mygo`)
 

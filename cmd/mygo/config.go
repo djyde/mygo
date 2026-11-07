@@ -116,6 +116,9 @@ type Config struct {
 
 	root string
 	file string // the configuration file, "" without one
+	// native is what the app's native modules add to its bundle, once
+	// prepareNative built them.
+	native *nativeApp
 	// langs are the languages the app ships, which languages reads once.
 	langs     []appLanguage
 	langsErr  error

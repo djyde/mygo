@@ -1,0 +1,485 @@
+package nativegen
+
+// swiftSupport is the part of the generated Swift that is the same for
+// every module, MODULE replaced by its name: the types the implementation
+// uses (NativeError, Closer, NativeCloser, NativeBuffer) and the glue Go
+// calls through.
+const swiftSupport = `
+// MARK: - Types for the implementation
+
+/// Errors an implementation throws that are not the module's own.
+enum NativeError: Error, Sendable {
+    /// Reaches Go as errors.ErrUnsupported: the system lacks what the
+    /// implementation needs, such as a framework of a newer version.
+    case unsupported
+    /// Reaches Go as native.ErrClosed.
+    case closed
+    /// An error a Go function or method returned.
+    case go(String)
+}
+
+/// What stops what a method started, as Go's io.Closer.
+protocol Closer: AnyObject {
+    func close() throws
+}
+
+/// A Closer that runs a closure, once.
+final class NativeCloser: Closer, @unchecked Sendable {
+    private let lock = NSLock()
+    private var fn: (() -> Void)?
+
+    init(_ fn: @escaping () -> Void) { self.fn = fn }
+
+    func close() {
+        lock.lock()
+        let f = fn
+        fn = nil
+        lock.unlock()
+        f?()
+    }
+}
+
+/// Memory that Go and the implementation both use: a *native.Buffer.
+final class NativeBuffer: Codable, @unchecked Sendable {
+    /// The buffer's memory, valid as long as the buffer.
+    let bytes: UnsafeMutableRawBufferPointer
+    private let owned: Bool
+
+    /// Makes a buffer of count bytes, which the implementation may yield
+    /// from a stream: Go reads it until its loop asks for the next value.
+    init(count: Int) {
+        bytes = .allocate(byteCount: Swift.max(count, 1), alignment: 16)
+        owned = true
+    }
+
+    var count: Int { bytes.count }
+
+    init(from decoder: any Decoder) throws {
+        var c = try decoder.unkeyedContainer()
+        let p = try c.decode(UInt64.self)
+        let n = try c.decode(Int.self)
+        bytes = UnsafeMutableRawBufferPointer(start: UnsafeMutableRawPointer(bitPattern: UInt(p)), count: n)
+        owned = false
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var c = encoder.unkeyedContainer()
+        try c.encode(UInt64(UInt(bitPattern: bytes.baseAddress)))
+        try c.encode(bytes.count)
+    }
+
+    deinit {
+        if owned { bytes.deallocate() }
+    }
+}
+
+// MARK: - Glue
+
+public typealias _MygoCallback = @convention(c) (UInt64, UInt64, Int64, UnsafeRawPointer?, Int) -> UnsafeMutableRawPointer?
+
+nonisolated(unsafe) var _mygoCallback: _MygoCallback?
+
+let _mygoKindResult: UInt64 = 1
+let _mygoKindItem: UInt64 = 2
+let _mygoKindNotify: UInt64 = 3
+let _mygoKindAsk: UInt64 = 4
+let _mygoKindRelease: UInt64 = 5
+let _mygoKindInvoke: UInt64 = 6
+let _mygoKindInvokeAsync: UInt64 = 7
+let _mygoKindCancel: UInt64 = 8
+
+/// Tells Go something, and returns its answer, if any.
+@discardableResult
+func _mygoSend(_ kind: UInt64, _ id: UInt64, _ status: Int64, _ data: Data?) -> (Int64, Data)? {
+    guard let cb = _mygoCallback else { return nil }
+    let p: UnsafeMutableRawPointer?
+    if let data, !data.isEmpty {
+        p = data.withUnsafeBytes { cb(kind, id, status, $0.baseAddress, $0.count) }
+    } else {
+        p = cb(kind, id, status, nil, 0)
+    }
+    guard let p else { return nil }
+    defer { free(p) }
+    let st = p.loadUnaligned(as: Int64.self)
+    let n = Int(p.loadUnaligned(fromByteOffset: 8, as: Int64.self))
+    return (st, Data(bytes: p + 16, count: n))
+}
+
+/// A result for Go: its status, its length, its bytes, which Go frees.
+func _mygoBlock(_ status: Int64, _ data: Data?) -> UnsafeMutableRawPointer? {
+    let n = data?.count ?? 0
+    guard let p = malloc(16 + n) else { return nil }
+    p.storeBytes(of: status, as: Int64.self)
+    p.storeBytes(of: Int64(n), toByteOffset: 8, as: Int64.self)
+    if let data, n > 0 {
+        data.withUnsafeBytes { (p + 16).copyMemory(from: $0.baseAddress!, byteCount: n) }
+    }
+    return p
+}
+
+func _mygoRun(_ body: () throws -> Data?) -> UnsafeMutableRawPointer? {
+    do {
+        return _mygoBlock(0, try body())
+    } catch {
+        return _mygoBlock(1, _mygoErrorJSON(error))
+    }
+}
+
+func _mygoRunMain(_ body: @MainActor () throws -> Data?) -> UnsafeMutableRawPointer? {
+    _mygoRun { try MainActor.assumeIsolated { try body() } }
+}
+
+/// Runs what starts an asynchronous call or a stream: Go waits for its
+/// results through the callback.
+func _mygoStart(_ body: () throws -> Data?) -> UnsafeMutableRawPointer? {
+    do {
+        _ = try body()
+        return _mygoBlock(2, nil)
+    } catch {
+        return _mygoBlock(1, _mygoErrorJSON(error))
+    }
+}
+
+func _mygoCall<T>(_ f: () throws -> T) rethrows -> T { try f() }
+
+@MainActor func _mygoCallMain<T>(_ f: @MainActor () throws -> T) rethrows -> T { try f() }
+
+func _mygoMust<T>(_ f: () throws -> T) -> T {
+    do {
+        return try f()
+    } catch {
+        fatalError("MODULE: Go failed to answer: \(error)")
+    }
+}
+
+func _mygoFail<T>() -> T { fatalError("MODULE: Go failed to answer") }
+
+private func _mygoTimeFormatter(_ fractional: Bool) -> ISO8601DateFormatter {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = fractional ? [.withInternetDateTime, .withFractionalSeconds] : [.withInternetDateTime]
+    return f
+}
+
+/// Parses Go's RFC 3339 times, with up to nine digits of a second.
+func _mygoParseTime(_ s: String) -> Date? {
+    var base = s
+    var fraction = 0.0
+    if let dot = s.firstIndex(of: "."), let t = s.firstIndex(of: "T"), dot > t {
+        var end = s.index(after: dot)
+        while end < s.endIndex, s[end].isNumber { end = s.index(after: end) }
+        fraction = Double("0" + s[dot..<end]) ?? 0
+        base = String(s[..<dot] + s[end...])
+    }
+    return _mygoTimeFormatter(false).date(from: base).map { $0.addingTimeInterval(fraction) }
+}
+
+func _mygoEncoder() -> JSONEncoder {
+    let e = JSONEncoder()
+    e.dateEncodingStrategy = .custom { d, enc in
+        var c = enc.singleValueContainer()
+        try c.encode(_mygoTimeFormatter(true).string(from: d))
+    }
+    return e
+}
+
+func _mygoDecoder() -> JSONDecoder {
+    let d = JSONDecoder()
+    d.dateDecodingStrategy = .custom { dec in
+        let c = try dec.singleValueContainer()
+        let s = try c.decode(String.self)
+        guard let t = _mygoParseTime(s) else {
+            throw DecodingError.dataCorruptedError(in: c, debugDescription: "not an RFC 3339 time: \(s)")
+        }
+        return t
+    }
+    return d
+}
+
+func _mygoJSON<T: Encodable>(_ v: T) throws -> Data { try _mygoEncoder().encode(v) }
+
+func _mygoDecode<T: Decodable>(_ t: T.Type, _ p: UnsafeRawPointer?, _ n: Int) throws -> T {
+    let d = p.map { Data(bytes: $0, count: n) } ?? Data("null".utf8)
+    return try _mygoDecoder().decode(T.self, from: d)
+}
+
+/// The arguments of a call into Go, as a JSON array.
+func _mygoArgs(_ xs: any Encodable...) -> Data {
+    let e = _mygoEncoder()
+    var out = Data("[".utf8)
+    for (i, x) in xs.enumerated() {
+        if i > 0 { out.append(contentsOf: Array(",".utf8)) }
+        out.append((try? e.encode(x)) ?? Data("null".utf8))
+    }
+    out.append(contentsOf: Array("]".utf8))
+    return out
+}
+
+func _mygoAnswer<R: Decodable>(_ st: Int64, _ d: Data, _ r: R.Type) throws -> R {
+    if st == 1 { throw _mygoGoError(d) }
+    return try _mygoDecoder().decode(R.self, from: d.isEmpty ? Data("null".utf8) : d)
+}
+
+func _mygoErrorJSON(_ error: any Error) -> Data {
+    var d: [String: Any] = [:]
+    switch error {
+    case let e as MODULEError:
+        d["code"] = e.rawValue
+    case NativeError.unsupported:
+        d["unsupported"] = true
+    case NativeError.closed:
+        d["closed"] = true
+    case NativeError.go(let message):
+        d["message"] = message
+    case is CancellationError:
+        d["canceled"] = true
+    default:
+        let ns = error as NSError
+        if type(of: error) is NSError.Type {
+            d["domain"] = ns.domain
+            d["message"] = ns.localizedDescription
+        } else {
+            let name = String(describing: type(of: error))
+            d["domain"] = name
+            d["message"] = (error as? LocalizedError)?.errorDescription ?? "\(name).\(error)"
+        }
+        d["errCode"] = ns.code
+    }
+    return (try? JSONSerialization.data(withJSONObject: d)) ?? Data("{}".utf8)
+}
+
+func _mygoGoError(_ data: Data) -> any Error {
+    let d = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+    if let code = d["code"] as? String, let e = MODULEError(rawValue: code) { return e }
+    if d["unsupported"] as? Bool == true { return NativeError.unsupported }
+    if d["closed"] as? Bool == true { return NativeError.closed }
+    if d["canceled"] as? Bool == true { return CancellationError() }
+    return NativeError.go(d["message"] as? String ?? "")
+}
+
+func _mygoRetain(_ v: AnyObject) -> UInt64 {
+    UInt64(UInt(bitPattern: Unmanaged.passRetained(v).toOpaque()))
+}
+
+func _mygoAnyObject(_ h: UInt64) -> AnyObject {
+    guard let p = UnsafeRawPointer(bitPattern: UInt(h)) else { fatalError("MODULE: Go passed nil for an object") }
+    return Unmanaged<AnyObject>.fromOpaque(p).takeUnretainedValue()
+}
+
+func _mygoObject<T>(_ h: UInt64) -> T {
+    guard let v = _mygoAnyObject(h) as? T else { fatalError("MODULE: Go passed an object of the wrong type for \(T.self)") }
+    return v
+}
+
+func _mygoRelease(_ h: UInt64) {
+    guard let p = UnsafeRawPointer(bitPattern: UInt(h)) else { return }
+    Unmanaged<AnyObject>.fromOpaque(p).release()
+}
+
+#if canImport(AppKit)
+@MainActor func _mygoWindow(_ h: UInt64) -> NSWindow {
+    let w: NSWindow = _mygoObject(h)
+    return w
+}
+
+/// Turns a rectangle of native UI, whose origin is the window's top-left,
+/// into the coordinates of the window's content view.
+@MainActor func _mygoFlip(_ r: CGRect, in w: NSWindow) -> CGRect {
+    guard let v = w.contentView, !v.isFlipped else { return r }
+    return CGRect(x: r.minX, y: v.bounds.height - r.minY - r.height, width: r.width, height: r.height)
+}
+#endif
+
+/// A ui.Rect, as Go encodes it.
+struct _MygoRect: Codable, Sendable {
+    var value: CGRect
+    init(_ r: CGRect) { value = r }
+    enum CodingKeys: String, CodingKey { case x = "X", y = "Y", w = "W", h = "H" }
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        value = CGRect(x: try c.decode(Double.self, forKey: .x), y: try c.decode(Double.self, forKey: .y),
+                       width: try c.decode(Double.self, forKey: .w), height: try c.decode(Double.self, forKey: .h))
+    }
+    func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(Double(value.minX), forKey: .x)
+        try c.encode(Double(value.minY), forKey: .y)
+        try c.encode(Double(value.width), forKey: .w)
+        try c.encode(Double(value.height), forKey: .h)
+    }
+}
+
+final class _MygoTable<V>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [UInt64: V] = [:]
+    func put(_ k: UInt64, _ v: V) { lock.lock(); values[k] = v; lock.unlock() }
+    func get(_ k: UInt64) -> V? { lock.lock(); defer { lock.unlock() }; return values[k] }
+    @discardableResult func remove(_ k: UInt64) -> V? { lock.lock(); defer { lock.unlock() }; return values.removeValue(forKey: k) }
+}
+
+/// The tasks of asynchronous calls and streams, by their call, which Go
+/// cancels.
+final class _MygoTasks: @unchecked Sendable {
+    private let lock = NSLock()
+    private var tasks: [UInt64: Task<Void, Never>] = [:]
+    private var done: Set<UInt64> = []
+    private var canceled: Set<UInt64> = []
+
+    func put(_ call: UInt64, _ t: Task<Void, Never>) {
+        lock.lock()
+        defer { lock.unlock() }
+        if done.remove(call) != nil { return }
+        if canceled.remove(call) != nil { t.cancel() }
+        tasks[call] = t
+    }
+
+    func finish(_ call: UInt64) {
+        lock.lock()
+        defer { lock.unlock() }
+        if tasks.removeValue(forKey: call) == nil { done.insert(call) }
+        canceled.remove(call)
+    }
+
+    func cancel(_ call: UInt64) {
+        lock.lock()
+        let t = tasks.removeValue(forKey: call)
+        if t == nil, done.remove(call) == nil { canceled.insert(call) }
+        lock.unlock()
+        t?.cancel()
+    }
+}
+
+let _mygoTasks = _MygoTasks()
+let _mygoDemands = _MygoTable<AsyncStream<Void>.Continuation>()
+let _mygoConts = _MygoTable<CheckedContinuation<(Int64, Data), Never>>()
+
+private let _mygoIDLock = NSLock()
+nonisolated(unsafe) private var _mygoLastID: UInt64 = 0
+
+func _mygoNextID() -> UInt64 {
+    _mygoIDLock.lock()
+    defer { _mygoIDLock.unlock() }
+    _mygoLastID += 1
+    return _mygoLastID
+}
+
+func _mygoFinish(_ call: UInt64, _ body: () async throws -> Data?) async {
+    let r: (Int64, Data?)
+    do {
+        r = (0, try await body())
+    } catch {
+        r = (1, _mygoErrorJSON(error))
+    }
+    _mygoTasks.finish(call)
+    _mygoSend(_mygoKindResult, call, r.0, r.1)
+}
+
+func _mygoTask(_ call: UInt64, _ body: @escaping () async throws -> Data?) {
+    _mygoTasks.put(call, Task { await _mygoFinish(call, body) })
+}
+
+func _mygoTaskMain(_ call: UInt64, _ body: @escaping @MainActor () async throws -> Data?) {
+    _mygoTasks.put(call, Task { @MainActor in await _mygoFinish(call, body) })
+}
+
+func _mygoIterate<S: AsyncSequence & Sendable>(_ call: UInt64, _ s: S, _ demand: AsyncStream<Void>, _ enc: (S.Element) throws -> Data?) async {
+    var it = s.makeAsyncIterator()
+    var lent: S.Element? = nil
+    for await _ in demand {
+        lent = nil // Go is done with what the previous value lent
+        do {
+            guard let v = try await it.next() else {
+                _mygoSend(_mygoKindItem, call, 3, nil)
+                break
+            }
+            lent = v
+            _mygoSend(_mygoKindItem, call, 0, try enc(v))
+        } catch {
+            _mygoSend(_mygoKindItem, call, 1, _mygoErrorJSON(error))
+            break
+        }
+    }
+    withExtendedLifetime(lent) {}
+    _mygoDemands.remove(call)
+    _mygoTasks.finish(call)
+}
+
+func _mygoDemand(_ call: UInt64) -> AsyncStream<Void> {
+    var cont: AsyncStream<Void>.Continuation!
+    let demand = AsyncStream<Void>(bufferingPolicy: .unbounded) { cont = $0 }
+    _mygoDemands.put(call, cont)
+    return demand
+}
+
+func _mygoStream<S: AsyncSequence & Sendable>(_ call: UInt64, _ make: @escaping () -> S, _ enc: @escaping (S.Element) throws -> Data?) {
+    let demand = _mygoDemand(call)
+    _mygoTasks.put(call, Task { await _mygoIterate(call, make(), demand, enc) })
+}
+
+func _mygoStreamMain<S: AsyncSequence & Sendable>(_ call: UInt64, _ make: @escaping @MainActor () -> S, _ enc: @escaping (S.Element) throws -> Data?) {
+    let demand = _mygoDemand(call)
+    _mygoTasks.put(call, Task { @MainActor in await _mygoIterate(call, make(), demand, enc) })
+}
+
+/// A Go function the implementation calls: a notification, or a question
+/// Go answers at once.
+final class _MygoGoFunc: @unchecked Sendable {
+    let id: UInt64
+    init(_ id: UInt64) { self.id = id }
+    deinit { if id != 0 { _mygoSend(_mygoKindRelease, id, 0, nil) } }
+
+    func notify(_ args: Data) {
+        if id != 0 { _mygoSend(_mygoKindNotify, id, 0, args) }
+    }
+
+    func ask<R: Decodable>(_ args: Data, _ r: R.Type) throws -> R {
+        guard id != 0, let (st, d) = _mygoSend(_mygoKindAsk, id, 0, args) else { throw NativeError.closed }
+        return try _mygoAnswer(st, d, R.self)
+    }
+}
+
+func _mygoEnvelope(_ method: Int, _ args: Data, cont: UInt64? = nil) -> Data {
+    var out = Data("{\"m\":\(method),".utf8)
+    if let cont { out.append(contentsOf: Array("\"c\":\(cont),".utf8)) }
+    out.append(contentsOf: Array("\"a\":".utf8))
+    out.append(args)
+    out.append(contentsOf: Array("}".utf8))
+    return out
+}
+
+func _mygoInvoke<R: Decodable>(_ id: UInt64, _ method: Int, _ args: Data, _ r: R.Type) throws -> R {
+    guard let (st, d) = _mygoSend(_mygoKindInvoke, id, 0, _mygoEnvelope(method, args)) else { throw NativeError.closed }
+    return try _mygoAnswer(st, d, R.self)
+}
+
+func _mygoInvokeAsync<R: Decodable>(_ id: UInt64, _ method: Int, _ args: Data, _ r: R.Type) async throws -> R {
+    let cont = _mygoNextID()
+    let (st, d) = await withTaskCancellationHandler {
+        await withCheckedContinuation { (c: CheckedContinuation<(Int64, Data), Never>) in
+            _mygoConts.put(cont, c)
+            _mygoSend(_mygoKindInvokeAsync, id, 0, _mygoEnvelope(method, args, cont: cont))
+        }
+    } onCancel: {
+        _mygoSend(_mygoKindCancel, cont, 0, nil)
+    }
+    return try _mygoAnswer(st, d, R.self)
+}
+`
+
+// swiftNanos is the wire type of time.Duration, for modules that use it:
+// Duration needs macOS 13.
+const swiftNanos = `
+/// A time.Duration, as Go encodes it: nanoseconds.
+@available(macOS 13, iOS 16, *)
+struct _MygoNanos: Codable, Sendable {
+    var value: Duration
+    init(_ d: Duration) { value = d }
+    init(from decoder: any Decoder) throws {
+        value = .nanoseconds(try decoder.singleValueContainer().decode(Int64.self))
+    }
+    func encode(to encoder: any Encoder) throws {
+        let c = value.components
+        var s = encoder.singleValueContainer()
+        try s.encode(c.seconds * 1_000_000_000 + c.attoseconds / 1_000_000_000)
+    }
+}
+`

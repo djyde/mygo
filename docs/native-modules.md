@@ -24,8 +24,16 @@ implementation for, its constructors return `errors.ErrUnsupported`, so the
 app compiles everywhere and decides what to do without it.
 
 <!-- repository-only:start -->
-> **Status: design.** This page describes native modules as they are meant
-> to work; none of it is implemented yet. Review it as the specification.
+> **Status: partly implemented.** Working: declaring the interface, its
+> methods, callbacks, types and errors, objects and subscriptions,
+> interfaces Go implements, `*mygo.Window` and `ui.Rect` arguments,
+> buffers, `mygo generate`, `mygo dev` and `mygo build` (the Swift package
+> built, put into `Contents/Frameworks` and signed, its `Info.plist` and
+> `Entitlements.plist` merged), and `mygo native new`, `add`, `check` and
+> `call`. Not yet: views (`native.View`, `ui.NativeView`), textures,
+> `NativeBufferPool`, modules that use other modules, `mygo native
+> prebuild`, and the agent skill. `mygo generate` rejects what is not
+> implemented, at its line.
 <!-- repository-only:end -->
 
 The Go side:
